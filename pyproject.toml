@@ -1,0 +1,88 @@
+[project]
+name = "petro-ops"
+version = "0.1.0"
+description = "Offline hierarchical RAG core for organizational knowledge, issue management and knowledge transfer."
+readme = "README.md"
+authors = [
+    { name = "Amir Hasanshahi", email = "amir13831107h@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.12.24,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "offline_rag"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "N", "RUF", "PT", "C4", "TID"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+packages = ["offline_rag"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --cov=offline_rag --cov-report=term-missing"
+markers = [
+    "slow: long-running tests (real models, full benchmark)",
+    "integration: real adapters wired together",
+    "smoke: full pipeline on tiny fixtures",
+    "regression: golden-set and judge-score regression",
+    "e2e: end-to-end scenarios",
+]
+
+[tool.coverage.report]
+fail_under = 80
+skip_empty = true
+
+[tool.importlinter]
+root_package = "offline_rag"
+
+# Inside every bounded context, outer layers may import inner ones, never the reverse.
+[[tool.importlinter.contracts]]
+name = "Hexagonal layers in each bounded context"
+type = "layers"
+containers = [
+    "offline_rag.organization",
+    "offline_rag.knowledge",
+    "offline_rag.issue",
+    "offline_rag.executor",
+    "offline_rag.transfer",
+    "offline_rag.rfp",
+    "offline_rag.evaluation",
+    "offline_rag.model_prompt",
+    "offline_rag.rag",
+]
+layers = ["interface", "infrastructure", "application", "domain"]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "uv"
+tag_format = "v$version"
+update_changelog_on_bump = true
+major_version_zero = true
+
+[dependency-groups]
+dev = [
+    "commitizen>=4.19.3",
+    "hypothesis>=6.170.14",
+    "import-linter>=2.15",
+    "mypy>=2.4.1",
+    "pre-commit>=4.7.0",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.3",
+]
