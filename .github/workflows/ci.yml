@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --locked
+
+      - name: Pre-commit hooks
+        run: uv run pre-commit run --all-files --show-diff-on-failure
+
+      - name: Import layers
+        run: uv run lint-imports
+
+      # Coverage gate is off until real code and tests exist; remove --cov-fail-under=0 then.
+      - name: Unit tests
+        run: |
+          if [ ! -d tests/unit ]; then
+            echo "No unit tests yet"
+            exit 0
+          fi
+          uv run pytest tests/unit --cov-fail-under=0 || [ $? -eq 5 ]
+
+      - name: Released prompts are unchanged
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          changed=$(git diff --name-only --diff-filter=MDR \
+            "origin/$BASE_REF...HEAD" -- prompts \
+            | grep -E '^prompts/.+/v[0-9]+\.md$' || true)
+          if [ -n "$changed" ]; then
+            echo "Released prompt versions must not change. Add a new version instead:"
+            echo "$changed"
+            exit 1
+          fi

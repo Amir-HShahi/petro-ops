@@ -1,37 +1,55 @@
+# Install both stages: file checks before the commit, message check after it's written.
 default_install_hook_types: [pre-commit, commit-msg]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # Remove spaces at the end of lines.
       - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      # Make every file end with exactly one newline.
       - id: end-of-file-fixer
+      # Fail on broken YAML or TOML syntax.
       - id: check-yaml
       - id: check-toml
+      # Stop model weights or big documents from being committed by accident.
       - id: check-added-large-files
         args: [--maxkb=1024]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.3
     hooks:
+      # Lint Python and fix what can be fixed automatically.
       - id: ruff-check
         args: [--fix]
+      # Format Python the same way for everyone.
       - id: ruff-format
 
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.0
     hooks:
+      # Block commits that contain secrets such as keys or passwords.
       - id: gitleaks
 
   - repo: https://github.com/commitizen-tools/commitizen
     rev: v4.19.3
     hooks:
+      # Reject commit messages that aren't Conventional Commits; versioning depends on them.
       - id: commitizen
         stages: [commit-msg]
 
-  # mypy runs from the project venv so it sees the real dependencies
+  # mypy runs from the project venv so it sees the real dependencies.
+  # It checks the whole package, since a change in one file can break types in another.
   - repo: local
     hooks:
+      # .env is gitignored and never staged, so this has to run on every commit.
+      - id: env-sync
+        name: .env matches .env.example
+        entry: uv run python scripts/check_env_sync.py
+        language: system
+        always_run: true
+        pass_filenames: false
       - id: mypy
         name: mypy
         entry: uv run mypy

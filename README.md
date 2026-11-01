@@ -27,4 +27,4 @@ uv run pytest tests/unit
 
 ## Contributing
 
-Trunk-based: short-lived branches off `master`, squash-merged through PRs. Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:` ...).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the branching, commit and PR flow.

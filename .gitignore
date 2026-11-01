@@ -18,6 +18,8 @@ models/*
 data/
 
 .env
+.env.*
+!.env.example
 .claude/settings.local.json
 .idea/
 .vscode/

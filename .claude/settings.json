@@ -1,0 +1,64 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh api:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_context.py\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_files.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_git.py\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/format_python.py\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --quiet python \"$CLAUDE_PROJECT_DIR/.claude/hooks/check.py\"",
+            "timeout": 300
+          }
+        ]
+      }
+    ]
+  }
+}

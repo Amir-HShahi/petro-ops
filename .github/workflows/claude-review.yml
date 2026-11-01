@@ -1,0 +1,76 @@
+name: claude-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+permissions: {}
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  claude-review:
+    # Skip drafts and bot PRs (Dependabot, release-please); they don't need a design review.
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The project's Claude hooks run through uv.
+      - uses: astral-sh/setup-uv@v6
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: >-
+            --model claude-sonnet-5-5
+            --max-turns 40
+            --allowedTools "Read,Grep,Glob,Task,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*)"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR: #${{ github.event.pull_request.number }}
+            BASE: origin/${{ github.event.pull_request.base.ref }}
+
+            Review this pull request. Find the changes with `git diff BASE...HEAD`.
+            You must not edit files, commit, push or change the PR. Only read and comment.
+
+            Do two reviews:
+
+            1. Spec alignment. Compare the changes with the project spec in
+               `docs/project-fa.md` (Persian). Use the `spec-analyst` agent for spec questions
+               instead of reading the whole file. Report:
+               - which spec sections this PR implements or touches, with section numbers
+               - anything that contradicts the spec, or behaves differently from it
+               - anything the spec puts out of scope (section 4.2) that the PR adds
+               - domain names that don't match the spec's terms
+               - spec requirements the PR seems to aim at but leaves incomplete
+
+            2. Code review. Use the `ddd-reviewer` agent and the rules in `.claude/rules/`
+               to check layers, domain model, ports, naming, errors, logging, the offline
+               rule and tests. Skip style issues that ruff already catches.
+
+            Post exactly one comment on the PR with `gh pr comment`, in plain English:
+
+            ## Spec alignment
+            <findings with spec section numbers, or "No spec issues found">
+
+            ## Code review
+            <findings as `file:line` — problem — fix, most serious first, or "No issues found">
+
+            ## Verdict
+            One line: Looks good / Needs changes, and why.
+
+            Keep it short. Separate what the spec says from your interpretation.
+            Don't praise; only report what needs attention.

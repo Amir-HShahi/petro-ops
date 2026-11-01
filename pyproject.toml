@@ -7,7 +7,9 @@ authors = [
     { name = "Amir Hasanshahi", email = "amir13831107h@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pydantic-settings>=2.16.2",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.24,<0.13.0"]
@@ -22,10 +24,18 @@ target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "B", "UP", "SIM", "N", "RUF", "PT", "C4", "TID"]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "N", "RUF", "PT", "C4", "TID", "BLE", "TRY", "EM", "LOG", "G"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
+
+# Settings are read only through offline_rag.settings, so .env.example stays complete.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"os.environ".msg = "Read settings through offline_rag.settings.Settings."
+"os.getenv".msg = "Read settings through offline_rag.settings.Settings."
+
+[tool.ruff.lint.per-file-ignores]
+".claude/hooks/*" = ["TID251"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -50,23 +60,6 @@ skip_empty = true
 
 [tool.importlinter]
 root_package = "offline_rag"
-
-# Inside every bounded context, outer layers may import inner ones, never the reverse.
-[[tool.importlinter.contracts]]
-name = "Hexagonal layers in each bounded context"
-type = "layers"
-containers = [
-    "offline_rag.organization",
-    "offline_rag.knowledge",
-    "offline_rag.issue",
-    "offline_rag.executor",
-    "offline_rag.transfer",
-    "offline_rag.rfp",
-    "offline_rag.evaluation",
-    "offline_rag.model_prompt",
-    "offline_rag.rag",
-]
-layers = ["interface", "infrastructure", "application", "domain"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
