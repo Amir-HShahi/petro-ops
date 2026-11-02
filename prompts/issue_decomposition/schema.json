@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "issue_decomposition output",
+  "type": "object",
+  "required": ["sub_issues"],
+  "additionalProperties": false,
+  "properties": {
+    "sub_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "description", "position", "citations"],
+        "additionalProperties": false,
+        "properties": {
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "position": { "type": "integer", "minimum": 1 },
+          "citations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["doc_id", "page_or_section", "quote"],
+              "additionalProperties": false,
+              "properties": {
+                "doc_id": { "type": "string" },
+                "page_or_section": { "type": "string" },
+                "quote": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "missing_information": { "type": "string" }
+  }
+}

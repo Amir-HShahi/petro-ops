@@ -1,0 +1,20 @@
+# The sample Rubric from spec §16.1. Points add up to max_score.
+name: default
+max_score: 20
+# JudgeThreshold for important outputs, see docs/evaluation-baseline.md.
+pass_score: 18
+criteria:
+  - criterion: faithfulness_to_source
+    points: 5
+  - criterion: completeness_for_request
+    points: 4
+  - criterion: detail_level_fits_target_layer
+    points: 3
+  - criterion: handles_uncertainty_and_gaps
+    points: 3
+  - criterion: clarity_and_structure
+    points: 2
+  - criterion: source_references
+    points: 2
+  - criterion: no_unsupported_claims
+    points: 1
