@@ -1,0 +1,41 @@
+# Local models used by the core, one entry per role.
+# Weights are not in git. Get them with the command in `source`.
+# `digest` comes from `ollama list`; `context_tokens`, `dimensions` and
+# `quantization` come from `ollama show <name>:<tag>`.
+# Prompts pick a model by `role`, see prompts/registry.yaml.
+# Decision record: docs/adr/0001-local-models-and-runtime.md
+models:
+  - role: llm
+    name: gemma4
+    tag: 12b
+    runtime: ollama
+    source: ollama pull gemma4:12b
+    # Not pulled yet. Fill these in from `ollama list` and `ollama show`.
+    digest:
+    quantization:
+    context_tokens:
+    # Used on every call unless a task in prompts/registry.yaml overrides them.
+    # Zero temperature and a fixed seed make the same input give the same output.
+    default_params:
+      temperature: 0
+      seed: 42
+      context_tokens: 8192
+      max_output_tokens: 1024
+    status: chosen
+
+  - role: embedding
+    name: embeddinggemma
+    tag: 300m
+    runtime: ollama
+    source: ollama pull embeddinggemma:300m
+    digest: 85462619ee72
+    quantization: BF16
+    context_tokens: 2048
+    dimensions: 768
+    status: chosen
+
+  - role: lvm
+    status: deferred
+
+  - role: reranker
+    status: deferred
