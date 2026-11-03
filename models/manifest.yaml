@@ -3,22 +3,24 @@
 # `digest` comes from `ollama list`; `context_tokens`, `dimensions` and
 # `quantization` come from `ollama show <name>:<tag>`.
 # Prompts pick a model by `role`, see prompts/registry.yaml.
-# Decision record: docs/adr/0001-local-models-and-runtime.md
+# Decision records: docs/adr/0001-local-models-and-runtime.md and
+# docs/adr/0002-lvm-ocr-and-document-parsers.md
 models:
   - role: llm
     name: gemma4
-    tag: 12b
+    tag: 12b-it-qat
     runtime: ollama
-    source: ollama pull gemma4:12b
-    # Not pulled yet. Fill these in from `ollama list` and `ollama show`.
-    digest:
-    quantization:
-    context_tokens:
+    source: ollama pull gemma4:12b-it-qat
+    digest: 38044be4f923
+    quantization: Q4_0
+    context_tokens: 262144
     # Used on every call unless a task in prompts/registry.yaml overrides them.
     # Zero temperature and a fixed seed make the same input give the same output.
+    # Gemma thinks by default; the benchmark in ADR 0001 ran with thinking off.
     default_params:
       temperature: 0
       seed: 42
+      is_thinking_enabled: false
       context_tokens: 8192
       max_output_tokens: 1024
     status: chosen
@@ -34,8 +36,34 @@ models:
     dimensions: 768
     status: chosen
 
+  # The same weights as the llm role, so the LVM needs no extra memory.
   - role: lvm
-    status: deferred
+    name: gemma4
+    tag: 12b-it-qat
+    runtime: ollama
+    source: ollama pull gemma4:12b-it-qat
+    digest: 38044be4f923
+    quantization: Q4_0
+    context_tokens: 262144
+    default_params:
+      temperature: 0
+      seed: 42
+      is_thinking_enabled: false
+    status: chosen
+
+  # Required cross-check for tables on scanned pages (ADR 0002).
+  # `latest` can move; the digest pins the tested weights.
+  - role: ocr
+    name: glm-ocr
+    tag: latest
+    runtime: ollama
+    source: ollama pull glm-ocr:latest
+    digest: 89d735dd9c07
+    quantization: F16
+    context_tokens: 131072
+    default_params:
+      temperature: 0
+    status: chosen
 
   - role: reranker
     status: deferred

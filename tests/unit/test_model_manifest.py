@@ -4,7 +4,7 @@ from typing import Any
 import yaml
 
 MANIFEST_PATH = Path(__file__).parents[2] / "models" / "manifest.yaml"
-ROLES = {"llm", "embedding", "lvm", "reranker"}
+ROLES = {"llm", "embedding", "lvm", "ocr", "reranker"}
 STATUSES = {"chosen", "deferred"}
 CHOSEN_FIELDS = {"name", "tag", "runtime", "source"}
 
@@ -49,3 +49,18 @@ def test_embedding_model_has_its_limits_when_chosen():
     assert embedding["status"] == "chosen"
     assert embedding["context_tokens"] > 0
     assert embedding["dimensions"] > 0
+
+
+def test_ocr_model_is_chosen_when_lvm_is_chosen():
+    status_by_role = {model["role"]: model["status"] for model in _models()}
+
+    if status_by_role["lvm"] == "chosen":
+        assert status_by_role["ocr"] == "chosen"
+
+
+def test_thinking_is_off_when_gemma_is_chosen():
+    gemma_models = [model for model in _models() if model.get("name") == "gemma4"]
+
+    assert gemma_models
+    for model in gemma_models:
+        assert model["default_params"]["is_thinking_enabled"] is False, model["role"]
