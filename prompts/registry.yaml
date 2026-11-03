@@ -1,0 +1,36 @@
+# Prompt registry (spec §8.3). One entry per task.
+# - active_version: the prompts/<task>/v<N>.md file in use.
+# - model_role: a role in models/manifest.yaml.
+# - output_format: text or json. A json task has a JSON Schema in output_schema.
+# - cites_sources: required when every claim must point to a source, else none.
+# - judge_rubric: a file in prompts/rubrics/ without the extension, or none.
+# - params: overrides of the model's default_params in models/manifest.yaml.
+# Other §8.3 task categories are added in the phase that needs them.
+tasks:
+  - task: question_answering
+    active_version: 1
+    model_role: llm
+    output_format: json
+    output_schema: prompts/question_answering/schema.json
+    cites_sources: required
+    judge_rubric: default
+    params: {}
+
+  - task: issue_decomposition
+    active_version: 1
+    model_role: llm
+    output_format: json
+    output_schema: prompts/issue_decomposition/schema.json
+    cites_sources: required
+    judge_rubric: default
+    params:
+      max_output_tokens: 2048
+
+  - task: llm_judge
+    active_version: 1
+    model_role: llm
+    output_format: json
+    output_schema: prompts/llm_judge/schema.json
+    cites_sources: none
+    judge_rubric: none
+    params: {}

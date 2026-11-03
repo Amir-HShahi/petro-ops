@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "llm_judge output",
+  "type": "object",
+  "required": [
+    "criterion_scores",
+    "score",
+    "explanation",
+    "missing_information",
+    "unsupported_claims",
+    "excess_detail",
+    "insufficient_detail",
+    "suggested_fix"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "criterion_scores": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["criterion", "score"],
+        "additionalProperties": false,
+        "properties": {
+          "criterion": { "type": "string" },
+          "score": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "score": { "type": "number", "minimum": 0, "maximum": 20 },
+    "explanation": { "type": "string" },
+    "missing_information": { "type": "array", "items": { "type": "string" } },
+    "unsupported_claims": { "type": "array", "items": { "type": "string" } },
+    "excess_detail": { "type": "array", "items": { "type": "string" } },
+    "insufficient_detail": { "type": "array", "items": { "type": "string" } },
+    "suggested_fix": { "type": "string" }
+  }
+}

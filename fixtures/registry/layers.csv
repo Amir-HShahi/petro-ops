@@ -1,0 +1,6 @@
+layer_index,name,role,received_detail_level
+0,Strategic,National Oil Company,top_executive
+1,Parent organizations,Regional operators,managerial
+2,Subsidiaries and units,Offshore fields and platforms,technical_summary
+3,Executive nodes,"Inspection, maintenance, drilling and HSE teams",detailed_technical
+4,Knowledge sources,"Archive of standards, past incidents and personnel records",

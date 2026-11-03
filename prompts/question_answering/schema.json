@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "question_answering output",
+  "type": "object",
+  "required": ["answer", "is_knowledge_sufficient", "citations"],
+  "additionalProperties": false,
+  "properties": {
+    "answer": { "type": "string" },
+    "is_knowledge_sufficient": { "type": "boolean" },
+    "missing_information": { "type": "string" },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["doc_id", "page_or_section", "quote"],
+        "additionalProperties": false,
+        "properties": {
+          "doc_id": { "type": "string" },
+          "page_or_section": { "type": "string" },
+          "quote": { "type": "string" }
+        }
+      }
+    }
+  }
+}

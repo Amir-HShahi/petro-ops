@@ -1,0 +1,10 @@
+node_id,name,layer_index,parent_node_id,activity_area,reporting_rule,confidentiality,is_internal_structure_tracked
+national_oil_company,National Oil Company,0,,national strategy and oversight,quarterly,internal,true
+region_south_operator,Region South Gas Operator,1,national_oil_company,South Field gas production,monthly,internal,true
+platform_sp12,Platform SP-12,2,region_south_operator,offshore production and processing,weekly,internal,true
+platform_sp14,Platform SP-14,2,region_south_operator,offshore production,weekly,internal,false
+sp12_inspection_team,SP-12 Inspection Team,3,platform_sp12,inspection and corrosion monitoring,per shift,internal,false
+sp12_maintenance_team,SP-12 Maintenance Team,3,platform_sp12,maintenance of rotating equipment,per shift,internal,false
+region_south_hse_team,Region South HSE Team,3,region_south_operator,process safety and HSE,weekly,internal,false
+region_south_well_operations_team,Region South Well Operations Team,3,region_south_operator,drilling and well control,weekly,internal,false
+region_south_archive,Region South Archive,4,region_south_operator,"standards, past incidents and personnel records",on request,internal,false

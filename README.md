@@ -9,6 +9,18 @@ uv sync
 uv run pre-commit install
 ```
 
+## Local models
+
+The core uses local models through [Ollama](https://ollama.com) on `localhost` only. The chosen models are listed in `models/manifest.yaml`, and the reasons are in `docs/adr/0001-local-models-and-runtime.md`.
+
+```bash
+ollama pull gemma4:12b
+ollama pull embeddinggemma:300m
+ollama list   # the digests should match models/manifest.yaml
+```
+
+Model weights are never committed.
+
 ## Checks
 
 ```bash
