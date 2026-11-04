@@ -23,6 +23,24 @@ class KnowledgeStorageError(InfrastructureError):
         )
 
 
+class MessageBrokerUnavailableError(InfrastructureError):
+    """The local message broker could not be reached or did not confirm a message (ADR 0005)."""
+
+    code = "KNOWLEDGE_MESSAGE_BROKER_UNAVAILABLE"
+
+    def __init__(self, operation: str) -> None:
+        """Create the error.
+
+        Args:
+            operation: What was being done, such as `publish`.
+        """
+        super().__init__(
+            "The local message broker is not available. Check that RabbitMQ is running, "
+            "then try again.",
+            details={"operation": operation},
+        )
+
+
 class SourceFileStorageError(InfrastructureError):
     """A file could not be written to or read from the local file store."""
 
@@ -63,8 +81,22 @@ class DocumentExtractionError(DomainError):
         )
 
 
+class DocumentParserModelsUnavailableError(InfrastructureError):
+    """Docling's layout or table-structure models are not in the local models folder (ADR 0007)."""
+
+    code = "KNOWLEDGE_PARSER_MODELS_UNAVAILABLE"
+
+    def __init__(self, missing_models: list[str]) -> None:
+        """Create the error for the model folders that are missing."""
+        super().__init__(
+            "The document layout models are not installed. Download them into the folder "
+            "set in DOCLING_MODELS_DIR, then run the ingestion again.",
+            details={"missing_models": missing_models},
+        )
+
+
 class DocConverterUnavailableError(InfrastructureError):
-    """DOC files need LibreOffice to be converted, and it is missing or failed (ADR 0002)."""
+    """DOC files need LibreOffice to be converted, and it is missing or failed (ADR 0007)."""
 
     code = "KNOWLEDGE_DOC_CONVERTER_UNAVAILABLE"
 

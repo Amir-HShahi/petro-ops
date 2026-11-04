@@ -1,7 +1,7 @@
 # 0002. LVM, OCR cross-check and document parsers
 
 Date: 2026-11-03
-Status: Proposed
+Status: Proposed; DOCX, DOC and PDF-text parsers superseded by 0007
 
 ## Context
 Phase 4 ingests DOC, DOCX and PDF files (spec §7.3, §21 phase 4). Scanned pages and layout-heavy pages need a local vision model (LVM) (spec §8.2, §19.1). ADR 0001 deferred the LVM until ingestion needed it.
@@ -48,7 +48,7 @@ Results on 30 hard scans of medium and hard quality:
 - Scanned pages are slow: about 24 s per page for Gemma, plus about 13 s for `glm-ocr` on pages with tables. Ingestion runs the LVM only where it is needed.
 - Gemma and `glm-ocr` together do not fit next to the rest of a 16 GB machine. With both loaded, a three-page run pushed the M5 to 15.5 GB and into swap. So the LVM reads every page first and `glm-ocr` then reads the tables, and each model is unloaded from Ollama when its pass ends. On `scan-01` the system then peaked at 13.5 GB (9.3 GB of it other apps) with only one model loaded at a time, and nothing loaded afterwards.
 - With the first page the model also loads, so the first scanned page of a run takes about a minute. Memory and speed on the 3060 laptop must be measured before ingestion is sized there.
-- `pdfplumber` was not part of the benchmark. On the fixtures, its text and tables, together with `python-docx`, place all 113 golden quotes from DOCX files and text-layer PDFs on the right page or section; DOC quotes wait for LibreOffice (`tests/integration/knowledge/test_golden_evidence_extraction.py`). It writes glyphs it cannot map, such as bullets, as `(cid:N)`; the parser removes them.
+- Since ADR 0007, Docling reads DOCX, DOC and text-layer PDFs; the rest of this point records the `pdfplumber` result it replaced. `pdfplumber` was not part of the benchmark. On the fixtures, its text and tables, together with `python-docx`, place all 113 golden quotes from DOCX files and text-layer PDFs on the right page or section; DOC quotes wait for LibreOffice (`tests/integration/knowledge/test_golden_evidence_extraction.py`). It writes glyphs it cannot map, such as bullets, as `(cid:N)`; the parser removes them.
 - LibreOffice becomes a system dependency on both machines and in CI.
 - The baseline in `docs/evaluation-baseline.md` stays empty until these models run on `fixtures/golden/`. `scan-01` and the real Cullen scan were not part of the benchmark.
 - The `glm-ocr` tag is `latest`, which can move. The digest in `models/manifest.yaml` pins the tested weights.

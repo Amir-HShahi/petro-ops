@@ -1,0 +1,76 @@
+# Postgres and RabbitMQ for local ingestion (ADR 0004, ADR 0005).
+# Start: docker compose -f docker/docker-compose.yml up -d
+# Every port is bound to 127.0.0.1 only. Host port 5432 belongs to another project,
+# so Postgres listens on 55432.
+name: petro-ops
+
+services:
+  postgres:
+    image: postgres:17.11-alpine
+    environment:
+      # Placeholders that match the defaults in .env.example.
+      POSTGRES_USER: petro_ops
+      POSTGRES_PASSWORD: petro_ops
+      POSTGRES_DB: petro_ops
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "petro_ops", "-d", "petro_ops"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  rabbitmq:
+    # The management plugin serves the queue counts the pipeline page shows (ADR 0008).
+    image: rabbitmq:4.4.0-management-alpine
+    # RabbitMQ keeps its data under its node name, rabbit@<hostname>, so the
+    # hostname must stay the same when the container is recreated.
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: petro_ops
+      RABBITMQ_DEFAULT_PASS: petro_ops
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  # Gives ingestion.vision a 6 h consumer timeout, then exits. RabbitMQ 4 accepts it
+  # only as a policy on classic queues (ADR 0005). A definitions file would also work,
+  # but loading one stops RabbitMQ from creating the default user above.
+  rabbitmq-policies:
+    image: rabbitmq:4.4.0-management-alpine
+    # rabbitmqctl reads the broker's Erlang cookie from the shared data volume.
+    user: rabbitmq
+    environment:
+      HOME: /var/lib/rabbitmq
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: "no"
+    entrypoint:
+      - rabbitmqctl
+      - --node
+      - rabbit@rabbitmq
+      - set_policy
+      - vision-consumer-timeout
+      - ^ingestion\.vision$$
+      - '{"consumer-timeout":21600000}'
+      - --apply-to
+      - queues
+
+volumes:
+  postgres-data:
+  rabbitmq-data:

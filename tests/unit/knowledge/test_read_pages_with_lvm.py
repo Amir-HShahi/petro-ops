@@ -9,22 +9,24 @@ from tests.fakes.knowledge import (
     FakeTableOcr,
     InMemoryEventPublisher,
     InMemoryExtractedContentRepository,
+    InMemoryKnowledgeIngestionRepository,
     InMemoryKnowledgeItemRepository,
     InMemorySourceFileStore,
 )
 
 from offline_rag.knowledge.application.commands import ReadPagesWithLvm
-from offline_rag.knowledge.application.errors import ExtractedContentNotFoundError
+from offline_rag.knowledge.application.errors import KnowledgeIngestionNotFoundError
 from offline_rag.knowledge.application.ports import PageReading, PageTable
 from offline_rag.knowledge.application.read_pages_with_lvm import ReadPagesWithLvmHandler
 from offline_rag.knowledge.domain.document_format import DocumentFormat
-from offline_rag.knowledge.domain.events import KnowledgeContentExtracted, PagesReadWithLvm
+from offline_rag.knowledge.domain.events import PagesReadWithLvm
 from offline_rag.knowledge.domain.extracted_content import (
     ContentBlock,
     ContentBlockKind,
     ContentSource,
     ExtractedContent,
 )
+from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus, KnowledgeIngestion
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
 from offline_rag.knowledge.domain.knowledge_scope import ConfidentialityLevel, KnowledgeScope
 from offline_rag.knowledge.domain.version_tag import VersionTag
@@ -56,12 +58,14 @@ class Pipeline:
         table_ocr: FakeTableOcr | None = None,
     ) -> None:
         self.repository = InMemoryKnowledgeItemRepository()
+        self.ingestions = InMemoryKnowledgeIngestionRepository(self.repository)
         self.file_store = InMemorySourceFileStore()
         self.contents = InMemoryExtractedContentRepository()
         self.renderer = FakePageRenderer()
         self.table_ocr = table_ocr or FakeTableOcr({2: MATCHING_OCR})
         self.publisher = InMemoryEventPublisher()
         self.handler = ReadPagesWithLvmHandler(
+            ingestion_repository=self.ingestions,
             repository=self.repository,
             source_file_store=self.file_store,
             extracted_content_repository=self.contents,
@@ -107,10 +111,19 @@ class Pipeline:
                 ExtractedContent(document_format=document_format, page_count=None, blocks=()),
             )
 
-    def read(self, page_numbers: tuple[int, ...] | None = None) -> ExtractedContent:
-        return self.handler.read(
-            ReadPagesWithLvm(item_id="ki-1", version_tag=V1, page_numbers=page_numbers)
+        ingestion = KnowledgeIngestion.queue(
+            ingestion_id="ing-1", item_id="ki-1", version_tag=V1, queued_at=NOW
         )
+        ingestion.start_extraction(NOW)
+        ingestion.wait_for_page_reading(NOW)
+        self.ingestions.save(ingestion)
+
+    def run(self, page_numbers: tuple[int, ...] | None = None) -> KnowledgeIngestion:
+        return self.handler.read(ReadPagesWithLvm(ingestion_id="ing-1", page_numbers=page_numbers))
+
+    def read(self, page_numbers: tuple[int, ...] | None = None) -> ExtractedContent:
+        self.run(page_numbers)
+        return self.contents.get("ki-1", V1)
 
 
 def test_only_pages_without_text_are_read_when_no_pages_are_given():
@@ -191,58 +204,73 @@ def test_nothing_is_read_when_the_file_has_no_pages(document_format: DocumentFor
     assert pipeline.publisher.events == []
 
 
-def test_error_is_raised_when_the_version_was_not_extracted():
+def test_ingestion_fails_when_the_version_was_not_extracted():
     pipeline = Pipeline()
     pipeline.contents.contents.clear()
 
-    with pytest.raises(ExtractedContentNotFoundError):
-        pipeline.read()
+    result = pipeline.run()
 
-
-def _extracted_event(pages_without_text: tuple[int, ...]) -> KnowledgeContentExtracted:
-    return KnowledgeContentExtracted(
-        occurred_at=NOW,
-        item_id="ki-1",
-        version_tag=V1,
-        block_count=1,
-        pages_without_text=pages_without_text,
+    assert (result.status, result.failure_code) == (
+        IngestionStatus.FAILED,
+        "KNOWLEDGE_EXTRACTED_CONTENT_NOT_FOUND",
     )
 
 
-def test_pages_are_read_when_extraction_reports_pages_without_text():
+def test_ingestion_completes_with_review_count_when_pages_are_read():
+    ocr = FakeTableOcr({2: [[["Location", "Measured (mm)"], ["R-3 EL +8.5 m, 6 o'clock", "20.0"]]]})
+    pipeline = Pipeline(table_ocr=ocr)
+
+    result = pipeline.run()
+
+    assert (result.status, result.blocks_for_review, result.attempts) == (
+        IngestionStatus.COMPLETED,
+        1,
+        2,
+    )
+    assert pipeline.ingestions.get_by_id("ing-1").status == IngestionStatus.COMPLETED
+
+
+def test_message_seen_again_changes_nothing_when_ingestion_has_completed():
     pipeline = Pipeline()
+    pipeline.run()
 
-    pipeline.handler.on_knowledge_content_extracted(_extracted_event((2,)))
+    again = pipeline.run()
 
+    assert again.status == IngestionStatus.COMPLETED
     assert pipeline.renderer.pages == [2]
 
 
-def test_nothing_is_read_when_extraction_reports_no_pages_without_text():
+def test_nothing_is_read_when_ingestion_is_not_waiting_for_page_reading():
     pipeline = Pipeline()
+    pipeline.ingestions.save(
+        KnowledgeIngestion.queue(
+            ingestion_id="ing-1", item_id="ki-1", version_tag=V1, queued_at=NOW
+        )
+    )
 
-    pipeline.handler.on_knowledge_content_extracted(_extracted_event(()))
+    result = pipeline.run()
 
+    assert result.status == IngestionStatus.QUEUED
     assert pipeline.renderer.pages == []
 
 
-def test_failure_is_logged_and_extraction_stays_when_the_model_server_is_off():
+def test_lookup_raises_not_found_when_ingestion_does_not_exist():
+    pipeline = Pipeline()
+
+    with pytest.raises(KnowledgeIngestionNotFoundError):
+        pipeline.handler.read(ReadPagesWithLvm(ingestion_id="ing-404"))
+
+
+def test_error_is_raised_for_a_retry_and_extraction_stays_when_the_model_server_is_off():
     pipeline = Pipeline(lvm=FakeLvm(error=ModelUnavailableError("gemma4:12b-it-qat")))
     before = pipeline.contents.get("ki-1", V1)
 
-    with capture_logs() as logs:
-        pipeline.handler.on_knowledge_content_extracted(_extracted_event((2,)))
+    with capture_logs() as logs, pytest.raises(ModelUnavailableError):
+        pipeline.run()
 
     assert pipeline.contents.get("ki-1", V1) == before
-    assert logs == [
-        {
-            "event": "pages_read_with_lvm_failed",
-            "log_level": "warning",
-            "item_id": "ki-1",
-            "version_tag": "v1",
-            "page_numbers": [2],
-            "code": "KNOWLEDGE_MODEL_UNAVAILABLE",
-        }
-    ]
+    assert pipeline.ingestions.get_by_id("ing-1").status == IngestionStatus.READING_PAGES
+    assert logs == []
 
 
 def test_one_model_is_loaded_at_a_time_when_several_pages_are_read():

@@ -63,6 +63,8 @@ Add a row in the same PR that adds the code.
 | `KNOWLEDGE_EMPTY_FILE` | Domain | A submitted file has no content. | Submit the file again with its content. |
 | `KNOWLEDGE_UNSUPPORTED_FORMAT` | Domain | A submitted file is not DOC, DOCX or PDF. The format is read from the file content, not its name. | Convert the file to DOC, DOCX or PDF. |
 | `KNOWLEDGE_INVALID_VERSION_HISTORY` | Unexpected | A KnowledgeItem was built with versions that break the version rules. This is a bug or corrupted storage. | Report it with the `request_id`. |
+| `KNOWLEDGE_FILE_TOO_LARGE` | Domain | A submitted file is larger than `MAX_FILE_MB`. | Split the file or compress its images, then submit it again. |
+| `KNOWLEDGE_REQUEST_INVALID` | Domain | An API request is missing a field or has a field of the wrong type. `details.problems` lists each field and what is wrong with it. | Fix the listed fields and send the request again. |
 | `KNOWLEDGE_OWNER_NODE_NOT_FOUND` | Not found | Knowledge was submitted for a Node that is not registered. | Register the Node first, or use the id of a registered Node. |
 | `KNOWLEDGE_ITEM_NOT_FOUND` | Not found | No KnowledgeItem has the requested id. | Check the id. |
 | `KNOWLEDGE_SOURCE_FILE_NOT_READABLE` | Not found | The file named in the command does not exist or cannot be read. | Check the path and the file's permissions. |
@@ -73,9 +75,15 @@ Add a row in the same PR that adds the code.
 | `KNOWLEDGE_EXTRACTED_CONTENT_NOT_FOUND` | Not found | Nothing has been extracted from the requested version yet, or its extraction failed. | Run the extraction for that version. |
 | `KNOWLEDGE_EXTRACTION_FAILED` | Domain | A file could not be read as the format its content claims. It may be damaged, password protected or another file type. | Open and save the file again, then submit it again. |
 | `KNOWLEDGE_DOC_CONVERTER_UNAVAILABLE` | Infrastructure | A DOC file needs LibreOffice to be converted, and it is missing or did not finish in time. | Install LibreOffice or set `LIBREOFFICE_PATH`, then run the extraction again. |
+| `KNOWLEDGE_PARSER_MODELS_UNAVAILABLE` | Infrastructure | Docling's layout or table-structure models are not in `DOCLING_MODELS_DIR`, so a PDF cannot be read. | Download them with `docling-tools models download layout tableformer -o <DOCLING_MODELS_DIR>`, then run the ingestion again. |
 | `KNOWLEDGE_INVALID_EXTRACTED_CONTENT` | Unexpected | A parser returned content that breaks the extraction rules. This is a bug in a parser. | Report it with the `request_id`. |
 | `KNOWLEDGE_MODEL_UNAVAILABLE` | Infrastructure | A local model did not answer: Ollama is not running, the model is not pulled, or the request timed out. | Start Ollama, pull the model in `models/manifest.yaml`, then run the step again. |
 | `KNOWLEDGE_MODEL_OUTPUT_INVALID` | Infrastructure | A local model kept answering in a shape its output schema does not allow. | Try again. If it keeps failing, report it with the `request_id`. |
 | `KNOWLEDGE_MODEL_URL_NOT_LOCAL` | Infrastructure | `OLLAMA_URL` points off this machine, which the offline rule forbids. | Set `OLLAMA_URL` to a loopback address such as `http://127.0.0.1:11434`. |
 | `KNOWLEDGE_MODEL_REGISTRY_UNAVAILABLE` | Infrastructure | The prompt or model of a task cannot be loaded from `prompts/registry.yaml` or `models/manifest.yaml`. | Check both files, and that the core runs from the repository root or `PROMPTS_DIR` and `MODEL_MANIFEST_PATH` are set. |
+| `KNOWLEDGE_INGESTION_NOT_FOUND` | Not found | No ingestion has the requested id. | Check the id returned when the file was submitted. |
+| `KNOWLEDGE_INGESTION_ALREADY_RUNNING` | Domain | A version was sent for ingestion again while an earlier run has not ended. | Wait until the earlier run is `completed` or `failed`, then try again. |
+| `KNOWLEDGE_INGESTION_STATUS_CHANGED` | Domain | Two workers tried to start the same ingestion step at once; the second one stopped and changed nothing. Workers handle it themselves. | Nothing; the first worker carries on. |
+| `KNOWLEDGE_INGESTION_INVALID_TRANSITION` | Unexpected | An ingestion was asked to move to a status its current status does not allow. This is a bug. | Report it with the `request_id`. |
+| `KNOWLEDGE_MESSAGE_BROKER_UNAVAILABLE` | Infrastructure | The local RabbitMQ broker cannot be reached or did not confirm a message. The message stays in the outbox and is sent later. | Start RabbitMQ and check `RABBITMQ_URL`. |
 | `UNEXPECTED_ERROR` | Unexpected | A failure that is not a project error reached the edge. This is a bug. | Report it with the `request_id`. |
