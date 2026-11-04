@@ -34,3 +34,21 @@ tasks:
     cites_sources: none
     judge_rubric: none
     params: {}
+
+  # Ingestion tasks (ADR 0002). They are not in the §8.3 list but are versioned the same way.
+  - task: page_reading
+    active_version: 1
+    model_role: lvm
+    output_format: json
+    output_schema: prompts/page_reading/schema.json
+    cites_sources: none
+    judge_rubric: none
+    params: {}
+
+  - task: table_ocr
+    active_version: 1
+    model_role: ocr
+    output_format: text
+    cites_sources: none
+    judge_rubric: none
+    params: {}

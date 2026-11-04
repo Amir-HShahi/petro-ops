@@ -7,6 +7,7 @@ from offline_rag.knowledge.domain.errors import InvalidExtractedContentError
 from offline_rag.knowledge.domain.extracted_content import (
     ContentBlock,
     ContentBlockKind,
+    ContentSource,
     ExtractedContent,
     normalize_extracted_text,
 )
@@ -127,3 +128,64 @@ def test_content_is_rejected_when_it_breaks_a_rule(
         ExtractedContent(document_format=document_format, page_count=page_count, blocks=blocks)
 
     assert caught.value.code == "KNOWLEDGE_INVALID_EXTRACTED_CONTENT"
+
+
+def test_given_pages_get_new_blocks_and_others_keep_theirs_when_pages_are_replaced():
+    content = _pdf(
+        ContentBlock.paragraph(order=0, text="Page one text layer.", page_number=1),
+        ContentBlock.paragraph(order=1, text="Page three text layer.", page_number=3),
+        page_count=3,
+    )
+    lvm_blocks = [
+        ContentBlock.paragraph(
+            order=0, text="Read from the scan.", page_number=2, source=ContentSource.LVM
+        ),
+        ContentBlock.table(order=0, rows=[["a", "b"]], page_number=2, source=ContentSource.LVM),
+    ]
+
+    replaced = content.with_page_blocks({2: lvm_blocks})
+
+    assert [(block.order, block.page_number) for block in replaced.blocks] == [
+        (0, 1),
+        (1, 2),
+        (2, 2),
+        (3, 3),
+    ]
+    assert [block.source for block in replaced.blocks if block.page_number == 2] == [
+        ContentSource.LVM
+    ] * 2
+
+
+def test_old_blocks_of_a_page_are_dropped_when_the_page_is_read_again():
+    content = _pdf(
+        ContentBlock.paragraph(order=0, text="First reading.", page_number=1), page_count=1
+    )
+
+    replaced = content.with_page_blocks(
+        {1: [ContentBlock.paragraph(order=0, text="Second reading.", page_number=1)]}
+    )
+
+    assert [block.text for block in replaced.blocks] == ["Second reading."]
+
+
+def test_table_is_marked_for_review_when_built_with_a_reason():
+    block = ContentBlock.table(order=0, rows=[["a"]], review_reason="OCR disagrees.")
+
+    assert block.needs_human_review
+    assert block.review_reason == "OCR disagrees."
+
+
+@pytest.mark.parametrize(("needs_review", "reason"), [(True, None), (False, "a reason")])
+def test_content_is_rejected_when_review_flag_and_reason_disagree(
+    needs_review: bool, reason: str | None
+):
+    block = ContentBlock(
+        order=0,
+        kind=ContentBlockKind.TEXT,
+        text="x",
+        needs_human_review=needs_review,
+        review_reason=reason,
+    )
+
+    with pytest.raises(InvalidExtractedContentError, match="review reason"):
+        ExtractedContent(document_format=DocumentFormat.DOCX, page_count=None, blocks=(block,))

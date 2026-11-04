@@ -38,3 +38,18 @@ class ExtractKnowledgeContent:
 
     item_id: str
     version_tag: VersionTag
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReadPagesWithLvm:
+    """Read PDF pages without a text layer with the LVM (spec §7.3, ADR 0002).
+
+    Attributes:
+        item_id: The KnowledgeItem.
+        version_tag: The version whose pages are read. It must already be extracted.
+        page_numbers: The pages to read. None means every page without a text layer.
+    """
+
+    item_id: str
+    version_tag: VersionTag
+    page_numbers: tuple[int, ...] | None = None

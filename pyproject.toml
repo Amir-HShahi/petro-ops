@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings>=2.16.2",
     "pypdfium2>=5.14.0",
     "python-docx>=1.2.0",
+    "pyyaml>=6.0.3",
     "structlog>=26.1.0",
 ]
 
@@ -46,6 +47,11 @@ python_version = "3.12"
 strict = true
 mypy_path = "src"
 packages = ["offline_rag"]
+
+# pypdfium2 ships no type information.
+[[tool.mypy.overrides]]
+module = ["pypdfium2", "pypdfium2.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -90,6 +96,6 @@ dev = [
     "pre-commit>=4.7.0",
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
-    "pyyaml>=6.0.3",
     "ruff>=0.17.3",
+    "types-pyyaml>=6.0.12.20261103",
 ]

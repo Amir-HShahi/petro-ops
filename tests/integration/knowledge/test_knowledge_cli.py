@@ -28,6 +28,11 @@ def settings(tmp_path: Path) -> Settings:
         data_dir=tmp_path / "data",
         node_registry_path=ROOT / "fixtures" / "registry" / "nodes.csv",
         log_level="error",
+        # Nothing listens on port 9, so the LVM step fails at once instead of
+        # calling a real model; test_lvm_on_real_scans.py covers the real one.
+        ollama_url="http://127.0.0.1:9",
+        prompts_dir=ROOT / "prompts",
+        model_manifest_path=ROOT / "models" / "manifest.yaml",
     )
 
 
@@ -239,3 +244,24 @@ def test_problem_details_are_printed_when_item_is_unknown(
     problem = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
     assert problem["type"] == code
     assert problem["status"] == 404
+
+
+def test_problem_details_are_printed_when_the_model_server_is_off(
+    settings: Settings, capsys: pytest.CaptureFixture[str]
+):
+    submitted = _run(
+        [
+            "submit",
+            str(FIXTURE_DOCS / "cases/scanned_sp12_riser_r3_baseline_2021.pdf"),
+            "--node",
+            "sp12_inspection_team",
+        ],
+        settings,
+        capsys,
+    )
+
+    assert main(["read-pages", submitted["item_id"]], settings=settings) == EXIT_FAILED
+
+    problem = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+    assert problem["type"] == "KNOWLEDGE_MODEL_UNAVAILABLE"
+    assert problem["status"] == 503

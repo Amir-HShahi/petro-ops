@@ -25,6 +25,13 @@ class Settings(BaseSettings):
         libreoffice_path: The LibreOffice `soffice` program that converts DOC files,
             as a name on PATH or a full path.
         doc_conversion_timeout_s: How long one DOC conversion may take, in seconds.
+        ollama_url: The local Ollama server. Only loopback addresses are accepted.
+        model_timeout_s: How long one model request may take, in seconds. The first
+            request also loads the model.
+        page_render_dpi: Resolution of page images for the vision models.
+        lvm_max_attempts: How often the LVM is asked before a malformed answer fails.
+        prompts_dir: The folder with the prompt registry and templates.
+        model_manifest_path: The file that names the model of each role.
     """
 
     # extra="forbid" makes a stale or misspelled variable in .env fail at startup.
@@ -36,3 +43,9 @@ class Settings(BaseSettings):
     min_page_text_chars: PositiveInt = 20
     libreoffice_path: str = "soffice"
     doc_conversion_timeout_s: PositiveInt = 120
+    ollama_url: str = "http://127.0.0.1:11434"
+    model_timeout_s: PositiveInt = 300
+    page_render_dpi: PositiveInt = 150
+    lvm_max_attempts: PositiveInt = 2
+    prompts_dir: Path = Path("prompts")
+    model_manifest_path: Path = Path("models/manifest.yaml")

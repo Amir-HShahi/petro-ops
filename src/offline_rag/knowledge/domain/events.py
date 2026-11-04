@@ -41,3 +41,18 @@ class KnowledgeContentExtracted(DomainEvent):
     version_tag: VersionTag
     block_count: int
     pages_without_text: tuple[int, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class PagesReadWithLvm(DomainEvent):
+    """The LVM read PDF pages that had no text layer (spec §7.3, ADR 0002).
+
+    Attributes:
+        page_numbers: The pages that were read.
+        tables_for_review: How many scanned tables a person must check.
+    """
+
+    item_id: str
+    version_tag: VersionTag
+    page_numbers: tuple[int, ...]
+    tables_for_review: int

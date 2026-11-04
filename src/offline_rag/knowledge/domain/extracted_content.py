@@ -2,7 +2,7 @@
 
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from offline_rag.knowledge.domain.document_format import DocumentFormat
@@ -37,6 +37,7 @@ class ContentSource(StrEnum):
     """Where a block's text came from. Text from a model is trusted less (ADR 0002)."""
 
     TEXT_LAYER = "text_layer"
+    LVM = "lvm"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -52,6 +53,9 @@ class ContentBlock:
         heading_path: Headings above the block, outermost first, for DOC and DOCX.
         table_rows: The normalized cells of each row, for tables only.
         source: Where the text came from.
+        needs_human_review: Whether a person must check the block before it is
+            trusted, such as a scanned table the two models read differently.
+        review_reason: Why the block needs review. Set exactly when it does.
     """
 
     order: int
@@ -61,6 +65,8 @@ class ContentBlock:
     heading_path: tuple[str, ...] = ()
     table_rows: tuple[tuple[str, ...], ...] = field(default=())
     source: ContentSource = ContentSource.TEXT_LAYER
+    needs_human_review: bool = False
+    review_reason: str | None = None
 
     @classmethod
     def paragraph(
@@ -91,8 +97,12 @@ class ContentBlock:
         page_number: int | None = None,
         heading_path: tuple[str, ...] = (),
         source: ContentSource = ContentSource.TEXT_LAYER,
+        review_reason: str | None = None,
     ) -> "ContentBlock":
-        """Return a table block with each cell normalized onto one line."""
+        """Return a table block with each cell normalized onto one line.
+
+        A `review_reason` marks the table for human review.
+        """
         table_rows = tuple(
             tuple(normalize_extracted_text(cell).replace("\n", " ") for cell in row) for row in rows
         )
@@ -104,6 +114,8 @@ class ContentBlock:
             heading_path=tuple(normalize_extracted_text(h) for h in heading_path),
             table_rows=table_rows,
             source=source,
+            needs_human_review=review_reason is not None,
+            review_reason=review_reason,
         )
 
 
@@ -116,6 +128,7 @@ class ExtractedContent:
     - No block is empty. A table has rows; a text block has none.
     - A PDF has a page count, and every block is on one of its pages. DOC and
       DOCX have neither, since they have no fixed pages.
+    - A block has a review reason if and only if it needs human review.
 
     Attributes:
         document_format: Format of the file the blocks came from.
@@ -131,6 +144,20 @@ class ExtractedContent:
         broken_rule = _first_broken_rule(self)
         if broken_rule:
             raise InvalidExtractedContentError(broken_rule)
+
+    def with_page_blocks(self, page_blocks: dict[int, list[ContentBlock]]) -> "ExtractedContent":
+        """Return a copy where each given PDF page holds only the given blocks.
+
+        Other pages keep their blocks. Blocks are put in page order, and orders are
+        numbered again from 0, so the result follows the same invariants.
+        """
+        kept = [block for block in self.blocks if block.page_number not in page_blocks]
+        added = [block for blocks in page_blocks.values() for block in blocks]
+        ordered = sorted(kept + added, key=lambda block: block.page_number or 0)
+        return replace(
+            self,
+            blocks=tuple(replace(block, order=order) for order, block in enumerate(ordered)),
+        )
 
     def pages_without_text(self, *, min_page_text_chars: int) -> tuple[int, ...]:
         """Return the PDF pages whose text layer has fewer than `min_page_text_chars` characters.
@@ -168,4 +195,6 @@ def _first_broken_rule(content: ExtractedContent) -> str | None:
             return f"block {block.order} has a page number."
         if page_count is not None and not 1 <= (block.page_number or 0) <= page_count:
             return f"block {block.order} is not on a page of the PDF."
+        if block.needs_human_review != (block.review_reason is not None):
+            return f"block {block.order} must have a review reason if and only if it needs review."
     return None

@@ -34,10 +34,19 @@ CREATE TABLE IF NOT EXISTS content_blocks (
     heading_path_json TEXT NOT NULL,
     table_rows_json TEXT NOT NULL,
     source TEXT NOT NULL,
+    needs_human_review INTEGER NOT NULL DEFAULT 0,
+    review_reason TEXT,
     PRIMARY KEY (item_id, version_tag, block_order),
     FOREIGN KEY (item_id, version_tag) REFERENCES extracted_contents (item_id, version_tag)
 );
 """
+
+# Columns added after the first release of the table, with their definitions.
+# A database created before them gets them on start (ADR 0003).
+_ADDED_BLOCK_COLUMNS = {
+    "needs_human_review": "INTEGER NOT NULL DEFAULT 0",
+    "review_reason": "TEXT",
+}
 
 
 class SqliteExtractedContentRepository:
@@ -50,6 +59,15 @@ class SqliteExtractedContentRepository:
             KnowledgeStorageError: The database cannot be created or opened.
         """
         self._database = SqliteDatabase(database_path, schema=_SCHEMA)
+        with self._database.transaction("migrate_schema") as connection:
+            existing = {
+                row["name"] for row in connection.execute("PRAGMA table_info(content_blocks)")
+            }
+            for column, definition in _ADDED_BLOCK_COLUMNS.items():
+                if column not in existing:
+                    connection.execute(
+                        f"ALTER TABLE content_blocks ADD COLUMN {column} {definition}"
+                    )
 
     def save(self, item_id: str, version_tag: VersionTag, content: ExtractedContent) -> None:
         """Replace the stored content of a version in one transaction.
@@ -70,7 +88,7 @@ class SqliteExtractedContentRepository:
                 (*key, content.document_format.value, content.page_count),
             )
             connection.executemany(
-                "INSERT INTO content_blocks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO content_blocks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [(*key, *_block_to_row(block)) for block in content.blocks],
             )
 
@@ -110,6 +128,8 @@ def _block_to_row(block: ContentBlock) -> tuple[object, ...]:
         json.dumps(list(block.heading_path)),
         json.dumps([list(row) for row in block.table_rows]),
         block.source.value,
+        int(block.needs_human_review),
+        block.review_reason,
     )
 
 
@@ -123,4 +143,6 @@ def _block_from_row(row: sqlite3.Row) -> ContentBlock:
         heading_path=tuple(json.loads(row["heading_path_json"])),
         table_rows=tuple(tuple(cells) for cells in json.loads(row["table_rows_json"])),
         source=ContentSource(row["source"]),
+        needs_human_review=bool(row["needs_human_review"]),
+        review_reason=row["review_reason"],
     )

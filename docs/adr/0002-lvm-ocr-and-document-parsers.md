@@ -46,7 +46,8 @@ Results on 30 hard scans of medium and hard quality:
 
 ## Consequences
 - Scanned pages are slow: about 24 s per page for Gemma, plus about 13 s for `glm-ocr` on pages with tables. Ingestion runs the LVM only where it is needed.
-- Ingestion with Gemma, the embedding model and `glm-ocr` loaded takes about 9–11 GB on the M5. Memory and speed on the 3060 laptop must be measured before ingestion is sized there.
+- Gemma and `glm-ocr` together do not fit next to the rest of a 16 GB machine. With both loaded, a three-page run pushed the M5 to 15.5 GB and into swap. So the LVM reads every page first and `glm-ocr` then reads the tables, and each model is unloaded from Ollama when its pass ends. On `scan-01` the system then peaked at 13.5 GB (9.3 GB of it other apps) with only one model loaded at a time, and nothing loaded afterwards.
+- With the first page the model also loads, so the first scanned page of a run takes about a minute. Memory and speed on the 3060 laptop must be measured before ingestion is sized there.
 - `pdfplumber` was not part of the benchmark. On the fixtures, its text and tables, together with `python-docx`, place all 113 golden quotes from DOCX files and text-layer PDFs on the right page or section; DOC quotes wait for LibreOffice (`tests/integration/knowledge/test_golden_evidence_extraction.py`). It writes glyphs it cannot map, such as bullets, as `(cid:N)`; the parser removes them.
 - LibreOffice becomes a system dependency on both machines and in CI.
 - The baseline in `docs/evaluation-baseline.md` stays empty until these models run on `fixtures/golden/`. `scan-01` and the real Cullen scan were not part of the benchmark.

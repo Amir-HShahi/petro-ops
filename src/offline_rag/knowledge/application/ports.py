@@ -1,6 +1,7 @@
 """Ports that Knowledge Management use cases depend on. Adapters live in `infrastructure/`."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
@@ -104,4 +105,85 @@ class EventPublisher(Protocol):
 
     def publish(self, events: Sequence[DomainEvent]) -> None:
         """Publish the events in order."""
+        ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class PageTable:
+    """One table as the LVM read it from a page image.
+
+    Attributes:
+        header: The header row.
+        rows: The data rows.
+        row_labels: The first cell of each data row, read a second time on its own.
+    """
+
+    header: tuple[str, ...]
+    rows: tuple[tuple[str, ...], ...]
+    row_labels: tuple[str, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class PageReading:
+    """What the LVM read from one page image, in reading order.
+
+    Attributes:
+        items: Each paragraph as text and each table as a `PageTable`, in the
+            order they stand on the page.
+    """
+
+    items: tuple[str | PageTable, ...]
+
+    @property
+    def tables(self) -> tuple[PageTable, ...]:
+        """The tables on the page, top to bottom."""
+        return tuple(item for item in self.items if isinstance(item, PageTable))
+
+
+class PageRenderer(Protocol):
+    """Draws a PDF page as an image for the vision models."""
+
+    def render(self, pdf: bytes, page_number: int) -> bytes:
+        """Return the page, starting at 1, as a PNG image.
+
+        Raises:
+            DocumentExtractionError: The file is not a readable PDF or has no such page.
+        """
+        ...
+
+
+class LVM(Protocol):
+    """A local vision model that reads text and tables from a page image (ADR 0002)."""
+
+    def read_page(self, image_png: bytes) -> PageReading:
+        """Return what is printed on the page.
+
+        Raises:
+            ModelUnavailableError: The local model server cannot be reached or failed.
+            ModelOutputInvalidError: The model kept answering in the wrong shape.
+        """
+        ...
+
+    def release(self) -> None:
+        """Free the memory the model holds. It loads again on its next use.
+
+        Only one large model fits next to the rest of the system on a 16 GB
+        machine, so each model is released when its pass is done (ADR 0002).
+        """
+        ...
+
+
+class TableOcr(Protocol):
+    """A local OCR model that reads only the tables of a page image (ADR 0002)."""
+
+    def read_tables(self, image_png: bytes) -> list[list[list[str]]]:
+        """Return every table on the page as rows of cells, header row first.
+
+        Raises:
+            ModelUnavailableError: The local model server cannot be reached or failed.
+        """
+        ...
+
+    def release(self) -> None:
+        """Free the memory the model holds. It loads again on its next use."""
         ...

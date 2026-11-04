@@ -9,8 +9,9 @@ import structlog
 from offline_rag.knowledge.application.extract_knowledge_content import (
     ExtractKnowledgeContentHandler,
 )
+from offline_rag.knowledge.application.read_pages_with_lvm import ReadPagesWithLvmHandler
 from offline_rag.knowledge.application.submit_knowledge_item import SubmitKnowledgeItemHandler
-from offline_rag.knowledge.domain.events import KnowledgeItemSubmitted
+from offline_rag.knowledge.domain.events import KnowledgeContentExtracted, KnowledgeItemSubmitted
 from offline_rag.knowledge.infrastructure.csv_node_directory import CsvNodeDirectory
 from offline_rag.knowledge.infrastructure.docx_parser import DocxParser
 from offline_rag.knowledge.infrastructure.in_process_event_publisher import (
@@ -19,6 +20,11 @@ from offline_rag.knowledge.infrastructure.in_process_event_publisher import (
 from offline_rag.knowledge.infrastructure.libreoffice_doc_parser import LibreOfficeDocParser
 from offline_rag.knowledge.infrastructure.local_document_parser import LocalDocumentParser
 from offline_rag.knowledge.infrastructure.local_source_file_store import LocalSourceFileStore
+from offline_rag.knowledge.infrastructure.model_registry import load_registered_prompt
+from offline_rag.knowledge.infrastructure.ollama_client import OllamaClient
+from offline_rag.knowledge.infrastructure.ollama_lvm import OllamaLvm
+from offline_rag.knowledge.infrastructure.ollama_table_ocr import OllamaTableOcr
+from offline_rag.knowledge.infrastructure.pdfium_page_renderer import PdfiumPageRenderer
 from offline_rag.knowledge.infrastructure.pdfplumber_pdf_parser import PdfplumberPdfParser
 from offline_rag.knowledge.infrastructure.sqlite_extracted_content_repository import (
     SqliteExtractedContentRepository,
@@ -40,6 +46,7 @@ class KnowledgeWiring:
 
     submit_handler: SubmitKnowledgeItemHandler
     extract_handler: ExtractKnowledgeContentHandler
+    read_pages_handler: ReadPagesWithLvmHandler
     knowledge_item_repository: SqliteKnowledgeItemRepository
     extracted_content_repository: SqliteExtractedContentRepository
 
@@ -63,9 +70,10 @@ def configure_logging(settings: Settings) -> None:
 
 
 def build_knowledge(settings: Settings) -> KnowledgeWiring:
-    """Return Knowledge Management on SQLite, local files, local parsers and the CSV registry.
+    """Return Knowledge Management on SQLite, local files, local parsers and local models.
 
-    Every submitted item is extracted right after it is registered.
+    Every submitted item is extracted right after it is registered, and PDF pages
+    without a text layer are then read by the LVM.
     """
     database_path = settings.data_dir / DATABASE_FILE_NAME
     knowledge_item_repository = SqliteKnowledgeItemRepository(database_path)
@@ -94,6 +102,33 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
     )
     event_publisher.subscribe(KnowledgeItemSubmitted, extract_handler.on_knowledge_item_submitted)
 
+    model_client = OllamaClient(base_url=settings.ollama_url, timeout_s=settings.model_timeout_s)
+    registries = {
+        "prompts_dir": settings.prompts_dir,
+        "model_manifest_path": settings.model_manifest_path,
+    }
+    read_pages_handler = ReadPagesWithLvmHandler(
+        repository=knowledge_item_repository,
+        source_file_store=source_file_store,
+        extracted_content_repository=extracted_content_repository,
+        page_renderer=PdfiumPageRenderer(dpi=settings.page_render_dpi),
+        lvm=OllamaLvm(
+            client=model_client,
+            prompt=load_registered_prompt(task="page_reading", **registries),
+            max_attempts=settings.lvm_max_attempts,
+        ),
+        table_ocr=OllamaTableOcr(
+            client=model_client,
+            prompt=load_registered_prompt(task="table_ocr", **registries),
+        ),
+        clock=clock,
+        event_publisher=event_publisher,
+        min_page_text_chars=settings.min_page_text_chars,
+    )
+    event_publisher.subscribe(
+        KnowledgeContentExtracted, read_pages_handler.on_knowledge_content_extracted
+    )
+
     submit_handler = SubmitKnowledgeItemHandler(
         repository=knowledge_item_repository,
         node_directory=CsvNodeDirectory(settings.node_registry_path),
@@ -105,6 +140,7 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
     return KnowledgeWiring(
         submit_handler=submit_handler,
         extract_handler=extract_handler,
+        read_pages_handler=read_pages_handler,
         knowledge_item_repository=knowledge_item_repository,
         extracted_content_repository=extracted_content_repository,
     )

@@ -7,6 +7,7 @@ from offline_rag.knowledge.application.errors import (
     ExtractedContentNotFoundError,
     KnowledgeItemNotFoundError,
 )
+from offline_rag.knowledge.application.ports import PageReading
 from offline_rag.knowledge.domain.document_format import DocumentFormat
 from offline_rag.knowledge.domain.extracted_content import ExtractedContent
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
@@ -124,3 +125,66 @@ class InMemoryEventPublisher:
 
     def publish(self, events: Sequence[DomainEvent]) -> None:
         self.events.extend(events)
+
+
+class FakePageRenderer:
+    """Returns a fake image naming the page, and records which pages were drawn."""
+
+    def __init__(self) -> None:
+        self.pages: list[int] = []
+
+    def render(self, pdf: bytes, page_number: int) -> bytes:
+        self.pages.append(page_number)
+        return f"image of page {page_number}".encode()
+
+
+class FakeLvm:
+    """Returns the reading set for each page image, or raises the error it was given.
+
+    Every call is appended to `calls`, which a test may share with `FakeTableOcr`
+    to check the order the two models were used in.
+    """
+
+    def __init__(
+        self,
+        readings: dict[int, PageReading] | None = None,
+        error: Exception | None = None,
+        calls: list[str] | None = None,
+    ) -> None:
+        self._readings = readings or {}
+        self._error = error
+        self.calls = [] if calls is None else calls
+
+    def read_page(self, image_png: bytes) -> PageReading:
+        page_number = int(image_png.decode().rsplit(" ", 1)[1])
+        self.calls.append(f"lvm reads page {page_number}")
+        if self._error is not None:
+            raise self._error
+        return self._readings.get(page_number, PageReading(items=()))
+
+    def release(self) -> None:
+        self.calls.append("lvm released")
+
+
+class FakeTableOcr:
+    """Returns the tables set for each page image, and records every call in `calls`."""
+
+    def __init__(
+        self,
+        tables: dict[int, list[list[list[str]]]] | None = None,
+        calls: list[str] | None = None,
+    ) -> None:
+        self._tables = tables or {}
+        self.calls = [] if calls is None else calls
+
+    @property
+    def pages(self) -> list[int]:
+        return [int(call.rsplit(" ", 1)[1]) for call in self.calls if call.startswith("ocr reads")]
+
+    def read_tables(self, image_png: bytes) -> list[list[list[str]]]:
+        page_number = int(image_png.decode().rsplit(" ", 1)[1])
+        self.calls.append(f"ocr reads page {page_number}")
+        return self._tables.get(page_number, [])
+
+    def release(self) -> None:
+        self.calls.append("ocr released")
