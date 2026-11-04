@@ -61,6 +61,12 @@ skip_empty = true
 [tool.importlinter]
 root_package = "offline_rag"
 
+[[tool.importlinter.contracts]]
+name = "Hexagonal layers in each bounded context"
+type = "layers"
+containers = ["offline_rag.knowledge"]
+layers = ["interface", "infrastructure", "application", "domain"]
+
 [tool.commitizen]
 name = "cz_conventional_commits"
 version_provider = "uv"
