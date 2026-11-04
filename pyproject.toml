@@ -1,6 +1,6 @@
 [project]
 name = "petro-ops"
-version = "0.2.0"
+version = "0.3.0"
 description = "Offline hierarchical RAG core for organizational knowledge, issue management and knowledge transfer."
 readme = "README.md"
 authors = [
