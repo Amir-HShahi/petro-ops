@@ -27,3 +27,17 @@ class MetadataRecorded(DomainEvent):
     item_id: str
     version_tag: VersionTag
     metadata: MetadataRecord
+
+
+@dataclass(frozen=True, kw_only=True)
+class KnowledgeContentExtracted(DomainEvent):
+    """Text and structure were extracted from a KnowledgeVersion (spec §7.2 steps 3 and 4).
+
+    Attributes:
+        pages_without_text: PDF pages with no usable text layer. The LVM reads them.
+    """
+
+    item_id: str
+    version_tag: VersionTag
+    block_count: int
+    pages_without_text: tuple[int, ...]

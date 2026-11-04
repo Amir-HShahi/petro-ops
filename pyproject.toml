@@ -8,7 +8,10 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "pdfplumber>=0.11.10",
     "pydantic-settings>=2.16.2",
+    "pypdfium2>=5.14.0",
+    "python-docx>=1.2.0",
     "structlog>=26.1.0",
 ]
 
@@ -57,8 +60,9 @@ markers = [
     "e2e: end-to-end scenarios",
 ]
 
+# The 80% gate is set in CI, where unit and integration tests run together.
+# A unit-only run leaves the adapters uncovered, so it has no gate.
 [tool.coverage.report]
-fail_under = 80
 skip_empty = true
 
 [tool.importlinter]

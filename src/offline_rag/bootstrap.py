@@ -2,15 +2,27 @@
 
 import logging
 import sys
+from dataclasses import dataclass
 
 import structlog
 
+from offline_rag.knowledge.application.extract_knowledge_content import (
+    ExtractKnowledgeContentHandler,
+)
 from offline_rag.knowledge.application.submit_knowledge_item import SubmitKnowledgeItemHandler
+from offline_rag.knowledge.domain.events import KnowledgeItemSubmitted
 from offline_rag.knowledge.infrastructure.csv_node_directory import CsvNodeDirectory
+from offline_rag.knowledge.infrastructure.docx_parser import DocxParser
 from offline_rag.knowledge.infrastructure.in_process_event_publisher import (
     InProcessEventPublisher,
 )
+from offline_rag.knowledge.infrastructure.libreoffice_doc_parser import LibreOfficeDocParser
+from offline_rag.knowledge.infrastructure.local_document_parser import LocalDocumentParser
 from offline_rag.knowledge.infrastructure.local_source_file_store import LocalSourceFileStore
+from offline_rag.knowledge.infrastructure.pdfplumber_pdf_parser import PdfplumberPdfParser
+from offline_rag.knowledge.infrastructure.sqlite_extracted_content_repository import (
+    SqliteExtractedContentRepository,
+)
 from offline_rag.knowledge.infrastructure.sqlite_knowledge_item_repository import (
     SqliteKnowledgeItemRepository,
 )
@@ -20,6 +32,16 @@ from offline_rag.settings import Settings
 
 DATABASE_FILE_NAME = "knowledge.sqlite3"
 SOURCE_FILES_DIR_NAME = "source_files"
+
+
+@dataclass(frozen=True, kw_only=True)
+class KnowledgeWiring:
+    """The Knowledge Management use cases, and the stores entry points read from."""
+
+    submit_handler: SubmitKnowledgeItemHandler
+    extract_handler: ExtractKnowledgeContentHandler
+    knowledge_item_repository: SqliteKnowledgeItemRepository
+    extracted_content_repository: SqliteExtractedContentRepository
 
 
 def configure_logging(settings: Settings) -> None:
@@ -40,13 +62,49 @@ def configure_logging(settings: Settings) -> None:
     )
 
 
-def build_submit_knowledge_item_handler(settings: Settings) -> SubmitKnowledgeItemHandler:
-    """Return the Register use case backed by SQLite, local files and the CSV Node registry."""
-    return SubmitKnowledgeItemHandler(
-        repository=SqliteKnowledgeItemRepository(settings.data_dir / DATABASE_FILE_NAME),
+def build_knowledge(settings: Settings) -> KnowledgeWiring:
+    """Return Knowledge Management on SQLite, local files, local parsers and the CSV registry.
+
+    Every submitted item is extracted right after it is registered.
+    """
+    database_path = settings.data_dir / DATABASE_FILE_NAME
+    knowledge_item_repository = SqliteKnowledgeItemRepository(database_path)
+    extracted_content_repository = SqliteExtractedContentRepository(database_path)
+    source_file_store = LocalSourceFileStore(settings.data_dir / SOURCE_FILES_DIR_NAME)
+    clock = SystemClock()
+    event_publisher = InProcessEventPublisher()
+    docx_parser = DocxParser()
+
+    extract_handler = ExtractKnowledgeContentHandler(
+        repository=knowledge_item_repository,
+        source_file_store=source_file_store,
+        parser=LocalDocumentParser(
+            docx_parser=docx_parser,
+            pdf_parser=PdfplumberPdfParser(),
+            doc_parser=LibreOfficeDocParser(
+                soffice_path=settings.libreoffice_path,
+                timeout_s=settings.doc_conversion_timeout_s,
+                docx_parser=docx_parser,
+            ),
+        ),
+        extracted_content_repository=extracted_content_repository,
+        clock=clock,
+        event_publisher=event_publisher,
+        min_page_text_chars=settings.min_page_text_chars,
+    )
+    event_publisher.subscribe(KnowledgeItemSubmitted, extract_handler.on_knowledge_item_submitted)
+
+    submit_handler = SubmitKnowledgeItemHandler(
+        repository=knowledge_item_repository,
         node_directory=CsvNodeDirectory(settings.node_registry_path),
-        source_file_store=LocalSourceFileStore(settings.data_dir / SOURCE_FILES_DIR_NAME),
-        clock=SystemClock(),
+        source_file_store=source_file_store,
+        clock=clock,
         id_generator=UuidIdGenerator(),
-        event_publisher=InProcessEventPublisher(),
+        event_publisher=event_publisher,
+    )
+    return KnowledgeWiring(
+        submit_handler=submit_handler,
+        extract_handler=extract_handler,
+        knowledge_item_repository=knowledge_item_repository,
+        extracted_content_repository=extracted_content_repository,
     )

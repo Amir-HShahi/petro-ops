@@ -4,7 +4,10 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol
 
+from offline_rag.knowledge.domain.document_format import DocumentFormat
+from offline_rag.knowledge.domain.extracted_content import ExtractedContent
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
+from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.shared_kernel.domain_event import DomainEvent
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
 
@@ -38,6 +41,45 @@ class SourceFileStore(Protocol):
 
     def save(self, file_name: str, content: bytes) -> str:
         """Store a file and return the reference that finds it again."""
+        ...
+
+    def read(self, reference: str) -> bytes:
+        """Return the whole file stored under `reference`.
+
+        Raises:
+            SourceFileStorageError: The file is missing or cannot be read.
+        """
+        ...
+
+
+class DocumentParser(Protocol):
+    """Reads DOC, DOCX and PDF files into text, tables and page references (spec §7.3)."""
+
+    def parse(self, content: bytes, document_format: DocumentFormat) -> ExtractedContent:
+        """Return the blocks of a file in reading order, with normalized text.
+
+        Pages without a text layer come back without blocks; the LVM reads them.
+
+        Raises:
+            DocumentExtractionError: The file cannot be read as its format.
+            DocConverterUnavailableError: A DOC file needs LibreOffice, which is missing.
+        """
+        ...
+
+
+class ExtractedContentRepository(Protocol):
+    """Stores the content extracted from each KnowledgeVersion."""
+
+    def save(self, item_id: str, version_tag: VersionTag, content: ExtractedContent) -> None:
+        """Store the content of a version, replacing what was stored for it before."""
+        ...
+
+    def get(self, item_id: str, version_tag: VersionTag) -> ExtractedContent:
+        """Return the content extracted from a version.
+
+        Raises:
+            ExtractedContentNotFoundError: Nothing was extracted from that version yet.
+        """
         ...
 
 

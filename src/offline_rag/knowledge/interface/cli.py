@@ -9,15 +9,21 @@ import argparse
 import json
 import sys
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 import structlog
 
-from offline_rag.bootstrap import build_submit_knowledge_item_handler, configure_logging
-from offline_rag.knowledge.application.commands import SubmitKnowledgeItem
+from offline_rag.bootstrap import KnowledgeWiring, build_knowledge, configure_logging
+from offline_rag.knowledge.application.commands import (
+    ExtractKnowledgeContent,
+    SubmitKnowledgeItem,
+)
+from offline_rag.knowledge.application.errors import ExtractedContentNotFoundError
+from offline_rag.knowledge.domain.extracted_content import ContentBlockKind, ExtractedContent
 from offline_rag.knowledge.domain.knowledge_scope import ConfidentialityLevel, KnowledgeScope
+from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.knowledge.interface.errors import SourceFileNotReadableError
 from offline_rag.knowledge.interface.problem_details import (
     problem_for_unexpected_error,
@@ -32,6 +38,7 @@ log = structlog.get_logger()
 
 EXIT_OK = 0
 EXIT_FAILED = 1
+DEFAULT_SHOWN_BLOCKS = 20
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -39,7 +46,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="knowledge", description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
 
-    submit = commands.add_parser("submit", help="Register a DOC, DOCX or PDF file for a Node.")
+    submit = commands.add_parser(
+        "submit", help="Register a DOC, DOCX or PDF file for a Node and extract its content."
+    )
     submit.add_argument("file", type=Path, help="The file to register.")
     submit.add_argument("--node", required=True, help="Id of the owning Node, as in the registry.")
     submit.add_argument(
@@ -58,6 +67,17 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument("--related-issue", action="append", default=[])
     submit.add_argument("--related-executor", action="append", default=[])
     submit.add_argument("--related-rfp", action="append", default=[])
+
+    extract = commands.add_parser(
+        "extract", help="Extract the content of a version again, replacing the old result."
+    )
+    extract.add_argument("item_id")
+    extract.add_argument("--version-tag", default="v1")
+
+    show = commands.add_parser("show-content", help="Print the extracted blocks of a version.")
+    show.add_argument("item_id")
+    show.add_argument("--version-tag", default="v1")
+    show.add_argument("--limit", type=int, default=DEFAULT_SHOWN_BLOCKS, help="Blocks to print.")
     return parser
 
 
@@ -68,9 +88,14 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
     configure_logging(settings)
     request_id = uuid.uuid4().hex[:8]
     structlog.contextvars.bind_contextvars(request_id=request_id)
+    commands: dict[str, Callable[[argparse.Namespace, KnowledgeWiring], dict[str, Any]]] = {
+        "submit": _submit,
+        "extract": _extract,
+        "show-content": _show_content,
+    }
 
     try:
-        result = _submit(arguments, settings)
+        result = commands[arguments.command](arguments, build_knowledge(settings))
     except ProjectError as error:
         log.exception("command_failed", code=error.code)
         _write_json(sys.stderr, problem_from_error(error, request_id=request_id))
@@ -86,15 +111,14 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
     return EXIT_OK
 
 
-def _submit(arguments: argparse.Namespace, settings: Settings) -> dict[str, str]:
+def _submit(arguments: argparse.Namespace, knowledge: KnowledgeWiring) -> dict[str, Any]:
     file: Path = arguments.file
     try:
         content = file.read_bytes()
     except OSError as error:
         raise SourceFileNotReadableError(file.name) from error
 
-    handler = build_submit_knowledge_item_handler(settings)
-    item_id = handler.submit(
+    item_id = knowledge.submit_handler.submit(
         SubmitKnowledgeItem(
             owner_node_id=NodeIdentifier(arguments.node),
             source_file_name=file.name,
@@ -117,7 +141,67 @@ def _submit(arguments: argparse.Namespace, settings: Settings) -> dict[str, str]
             ),
         )
     )
-    return {"item_id": item_id, "node_id": arguments.node, "file_name": file.name}
+    version_tag = VersionTag.for_sequence_number(1)
+    try:
+        extracted = knowledge.extracted_content_repository.get(item_id, version_tag)
+        extraction: dict[str, Any] | None = _summary(extracted, knowledge)
+    except ExtractedContentNotFoundError:
+        # Registration stands; the failure was logged and `extract` can retry it.
+        extraction = None
+    return {
+        "item_id": item_id,
+        "version_tag": version_tag.value,
+        "node_id": arguments.node,
+        "file_name": file.name,
+        "extraction": extraction,
+    }
+
+
+def _extract(arguments: argparse.Namespace, knowledge: KnowledgeWiring) -> dict[str, Any]:
+    version_tag = VersionTag(arguments.version_tag)
+    extracted = knowledge.extract_handler.extract(
+        ExtractKnowledgeContent(item_id=arguments.item_id, version_tag=version_tag)
+    )
+    return {
+        "item_id": arguments.item_id,
+        "version_tag": version_tag.value,
+        "extraction": _summary(extracted, knowledge),
+    }
+
+
+def _show_content(arguments: argparse.Namespace, knowledge: KnowledgeWiring) -> dict[str, Any]:
+    version_tag = VersionTag(arguments.version_tag)
+    extracted = knowledge.extracted_content_repository.get(arguments.item_id, version_tag)
+    return {
+        "item_id": arguments.item_id,
+        "version_tag": version_tag.value,
+        "extraction": _summary(extracted, knowledge),
+        "blocks": [
+            {
+                "order": block.order,
+                "kind": block.kind.value,
+                "page_number": block.page_number,
+                "heading_path": list(block.heading_path),
+                "source": block.source.value,
+                "text": block.text,
+            }
+            for block in extracted.blocks[: arguments.limit]
+        ],
+    }
+
+
+def _summary(extracted: ExtractedContent, knowledge: KnowledgeWiring) -> dict[str, Any]:
+    return {
+        "document_format": extracted.document_format.value,
+        "page_count": extracted.page_count,
+        "block_count": len(extracted.blocks),
+        "table_count": sum(block.kind == ContentBlockKind.TABLE for block in extracted.blocks),
+        "pages_without_text": list(
+            extracted.pages_without_text(
+                min_page_text_chars=knowledge.extract_handler.min_page_text_chars
+            )
+        ),
+    }
 
 
 def _write_json(stream: TextIO, body: Mapping[str, object]) -> None:

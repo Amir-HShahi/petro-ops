@@ -1,6 +1,6 @@
 """Errors raised by the Knowledge Management domain."""
 
-from offline_rag.shared_kernel.errors import DomainError, UnexpectedError
+from offline_rag.shared_kernel.errors import DomainError, NotFoundError, UnexpectedError
 
 
 class EmptySourceFileError(DomainError):
@@ -48,4 +48,37 @@ class InvalidKnowledgeVersionHistoryError(UnexpectedError):
         super().__init__(
             f"KnowledgeItem '{item_id}' has an invalid version history: {reason}",
             details={"item_id": item_id, "reason": reason},
+        )
+
+
+class KnowledgeVersionNotFoundError(NotFoundError):
+    """A KnowledgeItem has no version with the requested tag."""
+
+    code = "KNOWLEDGE_VERSION_NOT_FOUND"
+
+    def __init__(self, item_id: str, version_tag: str) -> None:
+        """Create the error for the missing version."""
+        super().__init__(
+            f"KnowledgeItem '{item_id}' has no version '{version_tag}'.",
+            details={"item_id": item_id, "version_tag": version_tag},
+        )
+
+
+class InvalidExtractedContentError(UnexpectedError):
+    """A parser returned content that breaks the rules of `ExtractedContent`.
+
+    Parsers are part of the core, so this means a bug in one of them.
+    """
+
+    code = "KNOWLEDGE_INVALID_EXTRACTED_CONTENT"
+
+    def __init__(self, reason: str) -> None:
+        """Create the error.
+
+        Args:
+            reason: Which rule the content breaks, in a short sentence.
+        """
+        super().__init__(
+            f"Extracted content is invalid: {reason}",
+            details={"reason": reason},
         )

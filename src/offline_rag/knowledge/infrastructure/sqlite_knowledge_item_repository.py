@@ -2,8 +2,6 @@
 
 import json
 import sqlite3
-from collections.abc import Iterator
-from contextlib import closing, contextmanager
 from dataclasses import asdict, fields
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +13,7 @@ from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
 from offline_rag.knowledge.domain.knowledge_scope import ConfidentialityLevel, KnowledgeScope
 from offline_rag.knowledge.domain.knowledge_version import KnowledgeVersion
 from offline_rag.knowledge.domain.version_tag import VersionTag
-from offline_rag.knowledge.infrastructure.errors import KnowledgeStorageError
+from offline_rag.knowledge.infrastructure.sqlite_database import SqliteDatabase
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
 
@@ -63,13 +61,7 @@ class SqliteKnowledgeItemRepository:
         Raises:
             KnowledgeStorageError: The database cannot be created or opened.
         """
-        self._database_path = database_path
-        try:
-            database_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._transaction("create_schema") as connection:
-                connection.executescript(_SCHEMA)
-        except OSError as error:
-            raise KnowledgeStorageError(operation="create_schema") from error
+        self._database = SqliteDatabase(database_path, schema=_SCHEMA)
 
     def get_by_id(self, item_id: str) -> KnowledgeItem:
         """Return the item with all its versions, oldest first.
@@ -78,7 +70,7 @@ class SqliteKnowledgeItemRepository:
             KnowledgeItemNotFoundError: No item has this id.
             KnowledgeStorageError: The database cannot be read.
         """
-        with self._transaction("get_by_id") as connection:
+        with self._database.transaction("get_by_id") as connection:
             item_row = connection.execute(
                 "SELECT * FROM knowledge_items WHERE item_id = ?", (item_id,)
             ).fetchone()
@@ -106,7 +98,7 @@ class SqliteKnowledgeItemRepository:
         Raises:
             KnowledgeStorageError: The database cannot be written, or the id is taken.
         """
-        with self._transaction("add") as connection:
+        with self._database.transaction("add") as connection:
             connection.execute(
                 "INSERT INTO knowledge_items VALUES (?, ?, ?, ?, ?)",
                 (
@@ -121,18 +113,6 @@ class SqliteKnowledgeItemRepository:
                 "INSERT INTO knowledge_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [_version_to_row(item.item_id, version) for version in item.versions],
             )
-
-    @contextmanager
-    def _transaction(self, operation: str) -> Iterator[sqlite3.Connection]:
-        # The connection context manager commits on success and rolls back on error;
-        # `closing` then releases the file handle.
-        try:
-            with closing(sqlite3.connect(self._database_path)) as connection, connection:
-                connection.row_factory = sqlite3.Row
-                connection.execute("PRAGMA foreign_keys = ON")
-                yield connection
-        except sqlite3.Error as error:
-            raise KnowledgeStorageError(operation) from error
 
 
 def _version_to_row(item_id: str, version: KnowledgeVersion) -> tuple[object, ...]:

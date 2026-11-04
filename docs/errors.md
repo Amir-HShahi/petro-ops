@@ -69,4 +69,9 @@ Add a row in the same PR that adds the code.
 | `KNOWLEDGE_STORAGE_FAILED` | Infrastructure | The local knowledge database cannot be read or written, or a new item's id is already taken. | Check that `DATA_DIR` is writable and has free space, then try again. |
 | `KNOWLEDGE_SOURCE_FILE_STORAGE_FAILED` | Infrastructure | A submitted file cannot be written to the local file store. | Check that `DATA_DIR` is writable and has free space, then try again. |
 | `KNOWLEDGE_NODE_REGISTRY_UNAVAILABLE` | Infrastructure | The Node registry file is missing, has no `node_id` column or lists an invalid Node id. | Check `NODE_REGISTRY_PATH` and the file's content. |
+| `KNOWLEDGE_VERSION_NOT_FOUND` | Not found | A KnowledgeItem has no version with the requested tag. | Check the version tag, such as `v1`. |
+| `KNOWLEDGE_EXTRACTED_CONTENT_NOT_FOUND` | Not found | Nothing has been extracted from the requested version yet, or its extraction failed. | Run the extraction for that version. |
+| `KNOWLEDGE_EXTRACTION_FAILED` | Domain | A file could not be read as the format its content claims. It may be damaged, password protected or another file type. | Open and save the file again, then submit it again. |
+| `KNOWLEDGE_DOC_CONVERTER_UNAVAILABLE` | Infrastructure | A DOC file needs LibreOffice to be converted, and it is missing or did not finish in time. | Install LibreOffice or set `LIBREOFFICE_PATH`, then run the extraction again. |
+| `KNOWLEDGE_INVALID_EXTRACTED_CONTENT` | Unexpected | A parser returned content that breaks the extraction rules. This is a bug in a parser. | Report it with the `request_id`. |
 | `UNEXPECTED_ERROR` | Unexpected | A failure that is not a project error reached the edge. This is a bug. | Report it with the `request_id`. |

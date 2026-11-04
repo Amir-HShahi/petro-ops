@@ -6,7 +6,10 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from offline_rag.knowledge.domain.document_format import DocumentFormat
-from offline_rag.knowledge.domain.errors import InvalidKnowledgeVersionHistoryError
+from offline_rag.knowledge.domain.errors import (
+    InvalidKnowledgeVersionHistoryError,
+    KnowledgeVersionNotFoundError,
+)
 from offline_rag.knowledge.domain.events import KnowledgeItemSubmitted, MetadataRecorded
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
 from offline_rag.knowledge.domain.knowledge_scope import ConfidentialityLevel, KnowledgeScope
@@ -174,3 +177,18 @@ def test_content_hash_is_the_same_when_content_is_the_same(content: bytes):
 def test_content_hash_differs_when_content_differs(first: bytes, second: bytes):
     if first != second:
         assert compute_content_hash(first) != compute_content_hash(second)
+
+
+def test_any_version_is_found_when_its_tag_is_asked_for():
+    item = _rebuild([_version(1), _version(2, previous="v1")], active="v2")
+
+    assert item.get_version(VersionTag("v1")).sequence_number == 1
+    assert item.get_version(VersionTag("v2")) is item.active_version
+
+
+def test_missing_version_is_reported_when_its_tag_is_unknown():
+    with pytest.raises(KnowledgeVersionNotFoundError) as caught:
+        _submitted_item().get_version(VersionTag("v7"))
+
+    assert caught.value.code == "KNOWLEDGE_VERSION_NOT_FOUND"
+    assert caught.value.details == {"item_id": "ki-1", "version_tag": "v7"}

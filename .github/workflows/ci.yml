@@ -34,14 +34,11 @@ jobs:
       - name: Import layers
         run: uv run lint-imports
 
-      # Coverage gate is off until real code and tests exist; remove --cov-fail-under=0 then.
-      - name: Unit tests
-        run: |
-          if [ ! -d tests/unit ]; then
-            echo "No unit tests yet"
-            exit 0
-          fi
-          uv run pytest tests/unit --cov-fail-under=0 || [ $? -eq 5 ]
+      # Adapters are covered by integration tests, so the coverage gate is measured
+      # on both suites together. Integration tests are offline; the DOC test skips
+      # because LibreOffice is not installed here.
+      - name: Unit and integration tests
+        run: uv run pytest tests/unit tests/integration --cov-fail-under=80
 
       - name: Released prompts are unchanged
         if: github.event_name == 'pull_request'

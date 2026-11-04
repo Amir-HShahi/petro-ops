@@ -3,8 +3,15 @@
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 
-from offline_rag.knowledge.application.errors import KnowledgeItemNotFoundError
+from offline_rag.knowledge.application.errors import (
+    ExtractedContentNotFoundError,
+    KnowledgeItemNotFoundError,
+)
+from offline_rag.knowledge.domain.document_format import DocumentFormat
+from offline_rag.knowledge.domain.extracted_content import ExtractedContent
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
+from offline_rag.knowledge.domain.version_tag import VersionTag
+from offline_rag.knowledge.infrastructure.errors import SourceFileStorageError
 from offline_rag.shared_kernel.domain_event import DomainEvent
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
 
@@ -45,6 +52,46 @@ class InMemorySourceFileStore:
         reference = f"file-{len(self.files) + 1}"
         self.files[reference] = (file_name, content)
         return reference
+
+    def read(self, reference: str) -> bytes:
+        try:
+            return self.files[reference][1]
+        except KeyError as error:
+            raise SourceFileStorageError(reference) from error
+
+
+class FakeDocumentParser:
+    """Returns the content it was given, or raises the error it was given, and records calls."""
+
+    def __init__(
+        self, content: ExtractedContent | None = None, error: Exception | None = None
+    ) -> None:
+        self._content = content
+        self._error = error
+        self.calls: list[tuple[bytes, DocumentFormat]] = []
+
+    def parse(self, content: bytes, document_format: DocumentFormat) -> ExtractedContent:
+        self.calls.append((content, document_format))
+        if self._error is not None:
+            raise self._error
+        assert self._content is not None
+        return self._content
+
+
+class InMemoryExtractedContentRepository:
+    """Keeps extracted content in a dict by item id and version tag."""
+
+    def __init__(self) -> None:
+        self.contents: dict[tuple[str, VersionTag], ExtractedContent] = {}
+
+    def save(self, item_id: str, version_tag: VersionTag, content: ExtractedContent) -> None:
+        self.contents[(item_id, version_tag)] = content
+
+    def get(self, item_id: str, version_tag: VersionTag) -> ExtractedContent:
+        try:
+            return self.contents[(item_id, version_tag)]
+        except KeyError as error:
+            raise ExtractedContentNotFoundError(item_id, version_tag.value) from error
 
 
 class FakeClock:

@@ -28,3 +28,17 @@ class KnowledgeItemNotFoundError(NotFoundError):
             f"KnowledgeItem '{item_id}' does not exist.",
             details={"item_id": item_id},
         )
+
+
+class ExtractedContentNotFoundError(NotFoundError):
+    """Nothing has been extracted from the requested KnowledgeVersion yet."""
+
+    code = "KNOWLEDGE_EXTRACTED_CONTENT_NOT_FOUND"
+
+    def __init__(self, item_id: str, version_tag: str) -> None:
+        """Create the error for the version without extracted content."""
+        super().__init__(
+            f"No content has been extracted from version '{version_tag}' of "
+            f"KnowledgeItem '{item_id}' yet. Run the extraction for it first.",
+            details={"item_id": item_id, "version_tag": version_tag},
+        )

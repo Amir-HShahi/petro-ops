@@ -4,7 +4,10 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from offline_rag.knowledge.domain.document_format import DocumentFormat
-from offline_rag.knowledge.domain.errors import InvalidKnowledgeVersionHistoryError
+from offline_rag.knowledge.domain.errors import (
+    InvalidKnowledgeVersionHistoryError,
+    KnowledgeVersionNotFoundError,
+)
 from offline_rag.knowledge.domain.events import KnowledgeItemSubmitted, MetadataRecorded
 from offline_rag.knowledge.domain.knowledge_scope import KnowledgeScope
 from offline_rag.knowledge.domain.knowledge_version import KnowledgeVersion
@@ -126,6 +129,17 @@ class KnowledgeItem:
     def active_version(self) -> KnowledgeVersion:
         """The version retrieval uses by default (spec §7.6)."""
         return next(v for v in self._versions if v.version_tag == self._active_version_tag)
+
+    def get_version(self, version_tag: VersionTag) -> KnowledgeVersion:
+        """Return the version with this tag. Old versions stay readable (spec §7.6).
+
+        Raises:
+            KnowledgeVersionNotFoundError: The item has no version with this tag.
+        """
+        for version in self._versions:
+            if version.version_tag == version_tag:
+                return version
+        raise KnowledgeVersionNotFoundError(self._item_id, version_tag.value)
 
     def pull_events(self) -> tuple[DomainEvent, ...]:
         """Return the events recorded since the last call, and forget them."""

@@ -9,6 +9,8 @@ from pathlib import Path
 from offline_rag.knowledge.infrastructure.errors import SourceFileStorageError
 
 _SAFE_SUFFIX = re.compile(r"\.[a-z0-9]{1,8}")
+# Only names this store made can be read back, so a reference is never a path.
+_REFERENCE = re.compile(r"[0-9a-f]{32}(?:\.[a-z0-9]{1,8})?")
 
 
 class LocalSourceFileStore:
@@ -46,3 +48,17 @@ class LocalSourceFileStore:
         except OSError as error:
             raise SourceFileStorageError(file_name) from error
         return reference
+
+    def read(self, reference: str) -> bytes:
+        """Return the file stored under `reference`.
+
+        Raises:
+            SourceFileStorageError: The reference is not one this store made, or
+                the file is missing or cannot be read.
+        """
+        if not _REFERENCE.fullmatch(reference):
+            raise SourceFileStorageError(reference)
+        try:
+            return (self._root / reference).read_bytes()
+        except OSError as error:
+            raise SourceFileStorageError(reference) from error

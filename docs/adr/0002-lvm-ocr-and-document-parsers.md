@@ -17,7 +17,7 @@ Scanned tables in this project hold safety data, such as riser wall thickness re
 - **OCR cross-check:** `glm-ocr` reads every table on a scanned page as well. This is required, not optional. A table is flagged for human review when the two models disagree, or when its row count does not match its row labels.
 - **DOCX:** `python-docx`.
 - **DOC:** converted to DOCX with LibreOffice headless (`soffice`), then read with `python-docx`.
-- **PDF:** `pypdfium2`, for per-page text and for rendering pages for the LVM.
+- **PDF:** `pdfplumber` for per-page text and for table cells, and `pypdfium2` for rendering pages for the LVM. Both are permissively licensed.
 - **Text clean-up:** all extracted text is normalised with Unicode NFKC. A PDF ligature turned "retrofit" into "retroﬁt" in the benchmark.
 - All models run through Ollama on the loopback address only, as in ADR 0001.
 
@@ -41,12 +41,13 @@ Results on 30 hard scans of medium and hard quality:
 - **`qwen3-vl:8b`.** Downloaded but not benchmarked. It would add a second large model to memory.
 - **PyMuPDF for PDF.** The benchmark used it, and its per-page text is good. It is licensed under AGPL-3.0, which would apply to the whole core when it is distributed as a wheel. `pypdfium2` is permissively licensed and can both extract text and render pages.
 - **`pypdf` for PDF.** Pure Python and permissively licensed, but it cannot render pages for the LVM.
+- **`pypdfium2` alone for PDF text.** It was the first choice here. It returns text but not table cells, so table rows lose their columns. `pdfplumber`, which builds on `pdfminer.six` and `pypdfium2`, finds tables and their position on the page.
 - **macOS `textutil` for DOC and DOCX.** The benchmark used it, but it runs only on macOS. CI runs on Linux.
 
 ## Consequences
 - Scanned pages are slow: about 24 s per page for Gemma, plus about 13 s for `glm-ocr` on pages with tables. Ingestion runs the LVM only where it is needed.
 - Ingestion with Gemma, the embedding model and `glm-ocr` loaded takes about 9–11 GB on the M5. Memory and speed on the 3060 laptop must be measured before ingestion is sized there.
-- `pypdfium2` was not part of the benchmark. The extraction branch must check its text against the fixtures (`ins-01-pdf`, `proj-01`, the public PDFs). It returns text, not table cells, so tables in PDFs with a text layer need their own check.
+- `pdfplumber` was not part of the benchmark. On the fixtures, its text and tables, together with `python-docx`, place all 113 golden quotes from DOCX files and text-layer PDFs on the right page or section; DOC quotes wait for LibreOffice (`tests/integration/knowledge/test_golden_evidence_extraction.py`). It writes glyphs it cannot map, such as bullets, as `(cid:N)`; the parser removes them.
 - LibreOffice becomes a system dependency on both machines and in CI.
 - The baseline in `docs/evaluation-baseline.md` stays empty until these models run on `fixtures/golden/`. `scan-01` and the real Cullen scan were not part of the benchmark.
 - The `glm-ocr` tag is `latest`, which can move. The digest in `models/manifest.yaml` pins the tested weights.
