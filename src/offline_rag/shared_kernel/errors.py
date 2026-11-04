@@ -1,4 +1,4 @@
-"""Base classes for every error the core raises.
+"""Base classes for every error the core raises, and the errors of the shared kernel.
 
 The contract shared with the backend and frontend is in `docs/errors.md`. Each
 concrete error inherits from exactly one category below and sets a `code`.
@@ -90,3 +90,17 @@ def _register_code(error_class: type[ProjectError]) -> None:
         msg = f"Error code {code} is already used by {existing.__qualname__}."
         raise TypeError(msg)
     _class_by_code[code] = error_class
+
+
+# Concrete errors stay below `_register_code`, because defining one calls it.
+class InvalidNodeIdentifierError(DomainError):
+    """A Node id is empty or has spaces around it, so it cannot stay stable (spec §5.3)."""
+
+    code = "ORGANIZATION_INVALID_NODE_IDENTIFIER"
+
+    def __init__(self, value: str) -> None:
+        """Create the error for the rejected id."""
+        super().__init__(
+            "A Node id must not be empty or start or end with a space.",
+            details={"value": value},
+        )

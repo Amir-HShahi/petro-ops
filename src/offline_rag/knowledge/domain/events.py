@@ -1,0 +1,29 @@
+"""Domain events of Knowledge Management (docs/domain-model.md, section 2)."""
+
+from dataclasses import dataclass
+
+from offline_rag.knowledge.domain.document_format import DocumentFormat
+from offline_rag.knowledge.domain.version_tag import VersionTag
+from offline_rag.shared_kernel.domain_event import DomainEvent
+from offline_rag.shared_kernel.metadata_record import MetadataRecord
+from offline_rag.shared_kernel.node_identifier import NodeIdentifier
+
+
+@dataclass(frozen=True, kw_only=True)
+class KnowledgeItemSubmitted(DomainEvent):
+    """A new KnowledgeItem was registered with its first version (spec §7.2 step 1)."""
+
+    item_id: str
+    owner_node_id: NodeIdentifier
+    version_tag: VersionTag
+    document_format: DocumentFormat
+    content_hash: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class MetadataRecorded(DomainEvent):
+    """Metadata was recorded for a version of a KnowledgeItem (spec §7.2 step 2)."""
+
+    item_id: str
+    version_tag: VersionTag
+    metadata: MetadataRecord

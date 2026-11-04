@@ -59,3 +59,14 @@ Add a row in the same PR that adds the code.
 
 | Code | Category | Meaning | How to fix |
 |---|---|---|---|
+| `ORGANIZATION_INVALID_NODE_IDENTIFIER` | Domain | A Node id is empty or starts or ends with a space. | Send the Node id exactly as it is in the registry. |
+| `KNOWLEDGE_EMPTY_FILE` | Domain | A submitted file has no content. | Submit the file again with its content. |
+| `KNOWLEDGE_UNSUPPORTED_FORMAT` | Domain | A submitted file is not DOC, DOCX or PDF. The format is read from the file content, not its name. | Convert the file to DOC, DOCX or PDF. |
+| `KNOWLEDGE_INVALID_VERSION_HISTORY` | Unexpected | A KnowledgeItem was built with versions that break the version rules. This is a bug or corrupted storage. | Report it with the `request_id`. |
+| `KNOWLEDGE_OWNER_NODE_NOT_FOUND` | Not found | Knowledge was submitted for a Node that is not registered. | Register the Node first, or use the id of a registered Node. |
+| `KNOWLEDGE_ITEM_NOT_FOUND` | Not found | No KnowledgeItem has the requested id. | Check the id. |
+| `KNOWLEDGE_SOURCE_FILE_NOT_READABLE` | Not found | The file named in the command does not exist or cannot be read. | Check the path and the file's permissions. |
+| `KNOWLEDGE_STORAGE_FAILED` | Infrastructure | The local knowledge database cannot be read or written, or a new item's id is already taken. | Check that `DATA_DIR` is writable and has free space, then try again. |
+| `KNOWLEDGE_SOURCE_FILE_STORAGE_FAILED` | Infrastructure | A submitted file cannot be written to the local file store. | Check that `DATA_DIR` is writable and has free space, then try again. |
+| `KNOWLEDGE_NODE_REGISTRY_UNAVAILABLE` | Infrastructure | The Node registry file is missing, has no `node_id` column or lists an invalid Node id. | Check `NODE_REGISTRY_PATH` and the file's content. |
+| `UNEXPECTED_ERROR` | Unexpected | A failure that is not a project error reached the edge. This is a bug. | Report it with the `request_id`. |

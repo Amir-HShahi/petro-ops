@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "pydantic-settings>=2.16.2",
+    "structlog>=26.1.0",
 ]
 
 [build-system]
@@ -45,7 +46,9 @@ packages = ["offline_rag"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --cov=offline_rag --cov-report=term-missing"
+# Lets tests import the shared fakes as `tests.fakes`.
+pythonpath = ["."]
+addopts = "-ra --strict-markers --import-mode=importlib --cov=offline_rag --cov-report=term-missing"
 markers = [
     "slow: long-running tests (real models, full benchmark)",
     "integration: real adapters wired together",
