@@ -1,7 +1,7 @@
 # 0003. Local storage for knowledge items and source files
 
 Date: 2026-11-04
-Status: Proposed
+Status: Proposed; storage and events superseded by 0004 and 0005
 
 ## Context
 Phase 4 registers DOC, DOCX and PDF files as KnowledgeItems (spec §7.2, §21 phase 4). Spec §17 asks for a local database for entities, metadata and version history, and file storage for the original documents. Everything must run offline on one machine, on both development machines in ADR 0001.

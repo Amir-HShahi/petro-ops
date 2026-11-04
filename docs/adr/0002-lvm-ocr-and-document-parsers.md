@@ -1,7 +1,7 @@
 # 0002. LVM, OCR cross-check and document parsers
 
 Date: 2026-11-03
-Status: Proposed
+Status: Proposed; DOCX, DOC and PDF-text parsers superseded by 0007
 
 ## Context
 Phase 4 ingests DOC, DOCX and PDF files (spec §7.3, §21 phase 4). Scanned pages and layout-heavy pages need a local vision model (LVM) (spec §8.2, §19.1). ADR 0001 deferred the LVM until ingestion needed it.
