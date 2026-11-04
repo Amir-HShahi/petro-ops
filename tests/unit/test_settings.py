@@ -68,3 +68,8 @@ def test_api_host_is_rejected_when_it_is_not_loopback(host: str):
 def test_api_port_is_rejected_when_out_of_range(port: int):
     with pytest.raises(ValidationError):
         Settings(api_port=port)
+
+
+def test_rabbitmq_management_url_is_rejected_when_host_is_not_loopback():
+    with pytest.raises(ValidationError, match="loopback"):
+        Settings(rabbitmq_management_url="http://user:secret@mq.example.com:15672")

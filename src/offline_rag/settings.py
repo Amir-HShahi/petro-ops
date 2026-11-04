@@ -29,8 +29,11 @@ class Settings(BaseSettings):
             outbox, in seconds (ADR 0005).
         reconcile_after_s: How long a queued ingestion may wait after its last message,
             in seconds, before the reconciler sends a new one (ADR 0005).
-        rabbitmq_url:The local RabbitMQ broker as an AMQP URL. Only loopback hosts
+        rabbitmq_url: The local RabbitMQ broker as an AMQP URL. Only loopback hosts
             are accepted (ADR 0005).
+        rabbitmq_management_url: The broker's management HTTP API, with its user and
+            password, read for the queue counts on the pipeline page. Only loopback
+            hosts are accepted (ADR 0008).
         worker_prefetch_count: How many unacked messages one worker holds at once.
         worker_max_attempts: How many times a worker step is tried before its
             ingestion fails and the message goes to the dead-letter queue.
@@ -61,12 +64,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="forbid")
 
     data_dir: Path = Path("data")
-    database_url: str = "postgresql://petro_ops:petro_ops@127.0.0.1:5432/petro_ops"
+    database_url: str = "postgresql://petro_ops:petro_ops@127.0.0.1:55432/petro_ops"
     database_pool_size: PositiveInt = 5
     database_connect_timeout_s: PositiveInt = 5
     outbox_poll_interval_s: PositiveInt = 2
     reconcile_after_s: PositiveInt = 1800
     rabbitmq_url: str = "amqp://petro_ops:petro_ops@127.0.0.1:5672/%2F"
+    rabbitmq_management_url: str = "http://petro_ops:petro_ops@127.0.0.1:15672"
     worker_prefetch_count: PositiveInt = 1
     worker_max_attempts: PositiveInt = 3
     worker_retry_delay_s: PositiveInt = 30
@@ -86,7 +90,7 @@ class Settings(BaseSettings):
     prompts_dir: Path = Path("prompts")
     model_manifest_path: Path = Path("models/manifest.yaml")
 
-    @field_validator("database_url", "rabbitmq_url")
+    @field_validator("database_url", "rabbitmq_url", "rabbitmq_management_url")
     @classmethod
     def _require_loopback_host(cls, url: str) -> str:
         # The core is offline: every socket must stay on this machine (ADR 0005).

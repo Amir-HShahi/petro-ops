@@ -53,7 +53,7 @@ uv run knowledge status <ingestion_id>
 uv run knowledge show-content <item_id> --limit 20
 ```
 
-The same actions are available over HTTP with `uv run knowledge api run`. How to start Postgres, RabbitMQ, the relay, the workers and the API is in [docs/running-ingestion.md](docs/running-ingestion.md).
+Postgres and RabbitMQ run in Docker: `docker compose -f docker/docker-compose.yml up -d`. The same actions are available over HTTP with `uv run knowledge api run`. How to start the relay, the workers and the API is in [docs/running-ingestion.md](docs/running-ingestion.md).
 
 Each command prints its result to stdout as JSON. Errors go to stderr as [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details with a code from `docs/errors.md`, and log lines go to stderr as JSON. Set `LOG_LEVEL=debug` to see every step. Add `--help` to any command for all its options.
 
@@ -71,6 +71,8 @@ CI also runs the integration tests and checks coverage on both suites:
 ```bash
 uv run pytest tests/unit tests/integration -m "not slow" --cov-fail-under=80
 ```
+
+The integration tests need Postgres and RabbitMQ from `docker/docker-compose.yml`, and LibreOffice for the DOC tests; they skip when these are missing.
 
 Tests marked `slow` run the real models on the scanned fixtures. They need Ollama with both models pulled, take about two minutes, and skip themselves when Ollama is not running:
 

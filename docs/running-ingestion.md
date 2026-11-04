@@ -6,8 +6,8 @@ How to run the ingestion pipeline on one machine: Postgres, RabbitMQ, the outbox
 
 | Process | Command | How many |
 |---|---|---|
-| Postgres | container | 1 |
-| RabbitMQ | container | 1 |
+| Postgres | `docker compose` | 1 |
+| RabbitMQ | `docker compose` | 1 |
 | Outbox relay | `uv run knowledge relay run` | exactly 1 |
 | Text worker | `uv run knowledge worker run --lane text` | 1 or more |
 | Vision worker | `uv run knowledge worker run --lane vision` | exactly 1 (one model in memory) |
@@ -30,8 +30,6 @@ How to run the ingestion pipeline on one machine: Postgres, RabbitMQ, the outbox
    cp .env.example .env
    ```
 
-   If port 5432 is already taken, set `DATABASE_URL` to the port used below, for example `postgresql://petro_ops:petro_ops@127.0.0.1:55432/petro_ops`.
-
 4. Download Docling's layout and table models (a few hundred MB, once per machine):
 
    ```bash
@@ -49,26 +47,17 @@ How to run the ingestion pipeline on one machine: Postgres, RabbitMQ, the outbox
 
 ## Start Postgres and RabbitMQ
 
-Until `docker/docker-compose.yml` exists, start them by hand. The ports are bound to `127.0.0.1` only.
-
 ```bash
-docker run -d --name petro-ops-pg \
-  -e POSTGRES_USER=petro_ops -e POSTGRES_PASSWORD=petro_ops \
-  -p 127.0.0.1:55432:5432 -v petro-ops-pg:/var/lib/postgresql/data \
-  postgres:17-alpine
-
-docker run -d --name petro-ops-mq \
-  -e RABBITMQ_DEFAULT_USER=petro_ops -e RABBITMQ_DEFAULT_PASS=petro_ops \
-  -p 127.0.0.1:5672:5672 -v petro-ops-mq:/var/lib/rabbitmq \
-  rabbitmq:4-alpine
+docker compose -f docker/docker-compose.yml up -d --wait
 ```
 
-Give the vision queue a 6 h consumer timeout. A long scanned report takes longer than the 30 min default, and RabbitMQ 4 accepts this only as a policy (ADR 0005):
+This starts Postgres on `127.0.0.1:55432` and RabbitMQ on `127.0.0.1:5672`, with its management UI on `http://127.0.0.1:15672`. A one-shot `rabbitmq-policies` service then gives the vision queue a 6 h consumer timeout: a long scanned report takes longer than the 30 min default, and RabbitMQ 4 accepts this only as a policy (ADR 0005). Check it with:
 
 ```bash
-docker exec petro-ops-mq rabbitmqctl set_policy vision-consumer-timeout \
-  '^ingestion\.vision$' '{"consumer-timeout":21600000}' --apply-to queues
+docker compose -f docker/docker-compose.yml exec rabbitmq rabbitmqctl list_policies
 ```
+
+Stop everything with `docker compose -f docker/docker-compose.yml down`; add `-v` to delete the data too.
 
 Create the tables:
 
