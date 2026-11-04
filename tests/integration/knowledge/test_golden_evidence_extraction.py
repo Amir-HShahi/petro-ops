@@ -13,15 +13,18 @@ from pathlib import Path
 
 import pytest
 
+from offline_rag.knowledge.domain.document_format import DocumentFormat
 from offline_rag.knowledge.domain.extracted_content import (
     TABLE_CELL_SEPARATOR,
     ContentBlock,
     ExtractedContent,
     normalize_extracted_text,
 )
-from offline_rag.knowledge.infrastructure.docx_parser import DocxParser
-from offline_rag.knowledge.infrastructure.libreoffice_doc_parser import LibreOfficeDocParser
-from offline_rag.knowledge.infrastructure.pdfplumber_pdf_parser import PdfplumberPdfParser
+from offline_rag.knowledge.infrastructure.docling_document_parser import DoclingDocumentParser
+from offline_rag.knowledge.infrastructure.libreoffice_doc_converter import (
+    LibreOfficeDocConverter,
+)
+from offline_rag.settings import Settings
 
 pytestmark = pytest.mark.integration
 
@@ -29,6 +32,16 @@ FIXTURES = Path(__file__).parents[3] / "fixtures"
 # These have no text layer; their quotes are the LVM's job (ADR 0002).
 DOCUMENTS_WITHOUT_TEXT_LAYER = {"scan-01", "pub-cullen-piper-alpha"}
 IS_LIBREOFFICE_INSTALLED = shutil.which("soffice") is not None
+MODELS_DIR = Settings().docling_models_dir
+# PDF quotes need Docling's layout and table models, which are slow to run.
+PDF_MARKS = [
+    pytest.mark.slow,
+    pytest.mark.skipif(
+        not MODELS_DIR.is_dir(),
+        reason=f"Docling models missing: docling-tools models download layout tableformer "
+        f"-o {MODELS_DIR}",
+    ),
+]
 
 
 def _manifest() -> dict[str, dict[str, str]]:
@@ -36,32 +49,39 @@ def _manifest() -> dict[str, dict[str, str]]:
         return {row["id"]: row for row in csv.DictReader(manifest)}
 
 
-def _evidence() -> list[tuple[str, str, str]]:
+def _evidence() -> list[pytest.ParameterSet]:
+    manifest = _manifest()
     found = []
     for golden_file in sorted((FIXTURES / "golden").glob("*.jsonl")):
         for line in golden_file.read_text(encoding="utf-8").splitlines():
             for evidence in json.loads(line)["evidence"]:
-                if evidence["doc_id"] not in DOCUMENTS_WITHOUT_TEXT_LAYER:
-                    found.append(
-                        (evidence["doc_id"], evidence["page_or_section"], evidence["quote"])
+                doc_id = evidence["doc_id"]
+                if doc_id in DOCUMENTS_WITHOUT_TEXT_LAYER:
+                    continue
+                found.append(
+                    pytest.param(
+                        doc_id,
+                        evidence["page_or_section"],
+                        evidence["quote"],
+                        marks=PDF_MARKS if manifest[doc_id]["format"] == "pdf" else [],
                     )
+                )
     return found
+
+
+@cache
+def _parser() -> DoclingDocumentParser:
+    return DoclingDocumentParser(
+        models_dir=MODELS_DIR,
+        doc_converter=LibreOfficeDocConverter(soffice_path="soffice", timeout_s=120),
+    )
 
 
 @cache
 def _extract(doc_id: str) -> ExtractedContent:
     row = _manifest()[doc_id]
     content = (FIXTURES / "docs" / row["file"]).read_bytes()
-    match row["format"]:
-        case "pdf":
-            return PdfplumberPdfParser().parse(content)
-        case "docx":
-            return DocxParser().parse(content)
-        case _:
-            parser = LibreOfficeDocParser(
-                soffice_path="soffice", timeout_s=120, docx_parser=DocxParser()
-            )
-            return parser.parse(content)
+    return _parser().parse(content, DocumentFormat(row["format"]))
 
 
 def _flatten(text: str) -> str:

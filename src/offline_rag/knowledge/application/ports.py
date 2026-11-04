@@ -178,6 +178,7 @@ class DocumentParser(Protocol):
         Raises:
             DocumentExtractionError: The file cannot be read as its format.
             DocConverterUnavailableError: A DOC file needs LibreOffice, which is missing.
+            DocumentParserModelsUnavailableError: The local layout models are missing.
         """
         ...
 

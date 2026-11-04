@@ -83,3 +83,17 @@ class IngestionAlreadyRunningError(DomainError):
             f"by '{ingestion_id}'. Wait until it ends, then try again.",
             details={"item_id": item_id, "version_tag": version_tag, "ingestion_id": ingestion_id},
         )
+
+
+class SourceFileTooLargeError(DomainError):
+    """A submitted file is larger than `MAX_FILE_MB` allows (ADR 0006)."""
+
+    code = "KNOWLEDGE_FILE_TOO_LARGE"
+
+    def __init__(self, *, file_name: str, max_file_mb: int) -> None:
+        """Create the error for the file and the limit it broke."""
+        super().__init__(
+            f"The file '{file_name}' is larger than {max_file_mb} MB. "
+            "Split it or compress its images, then submit it again.",
+            details={"file_name": file_name, "max_file_mb": max_file_mb},
+        )

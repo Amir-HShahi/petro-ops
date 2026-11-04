@@ -1,8 +1,8 @@
 """Command line entry point for Knowledge Management.
 
-Run `uv run python -m offline_rag.knowledge.interface.cli --help`. The result is
-printed to stdout as JSON; errors go to stderr as Problem Details, and log lines
-go to stderr as JSON.
+Run `uv run knowledge --help`. Results are printed to stdout as JSON; errors go to
+stderr as Problem Details, and log lines go to stderr as JSON. The `run` commands
+start long-running processes: the workers, the outbox relay and the API.
 """
 
 import argparse
@@ -16,28 +16,25 @@ from typing import Any, TextIO
 import structlog
 
 from offline_rag.bootstrap import KnowledgeWiring, build_knowledge, configure_logging
-from offline_rag.knowledge.application.commands import (
-    ExtractKnowledgeContent,
-    ReadPagesWithLvm,
-    ReingestKnowledgeItem,
-    SubmitKnowledgeItem,
-)
-from offline_rag.knowledge.application.errors import ExtractedContentNotFoundError
-from offline_rag.knowledge.domain.extracted_content import (
-    ContentBlockKind,
-    ContentSource,
-    ExtractedContent,
-)
-from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus, KnowledgeIngestion
+from offline_rag.knowledge.application.commands import ReingestKnowledgeItem, SubmitKnowledgeItem
+from offline_rag.knowledge.application.ports import IngestionLane
 from offline_rag.knowledge.domain.knowledge_scope import ConfidentialityLevel, KnowledgeScope
 from offline_rag.knowledge.domain.version_tag import VersionTag
+from offline_rag.knowledge.interface.api import run_api
 from offline_rag.knowledge.interface.errors import SourceFileNotReadableError
+from offline_rag.knowledge.interface.ingestion_worker import run_worker
+from offline_rag.knowledge.interface.outbox_relay import run_relay
 from offline_rag.knowledge.interface.problem_details import (
     problem_for_unexpected_error,
     problem_from_error,
 )
+from offline_rag.knowledge.interface.response_bodies import (
+    content_body,
+    ingestion_body,
+    receipt_body,
+)
 from offline_rag.settings import Settings
-from offline_rag.shared_kernel.errors import InfrastructureError, ProjectError
+from offline_rag.shared_kernel.errors import ProjectError
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
 
@@ -47,6 +44,8 @@ EXIT_OK = 0
 EXIT_FAILED = 1
 DEFAULT_SHOWN_BLOCKS = 20
 
+Command = Callable[[argparse.Namespace, KnowledgeWiring, Settings], dict[str, Any]]
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Return the parser for all Knowledge Management commands."""
@@ -54,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     submit = commands.add_parser(
-        "submit", help="Register a DOC, DOCX or PDF file for a Node and extract its content."
+        "submit", help="Register a DOC, DOCX or PDF file for a Node and queue its ingestion."
     )
     submit.add_argument("file", type=Path, help="The file to register.")
     submit.add_argument("--node", required=True, help="Id of the owning Node, as in the registry.")
@@ -75,28 +74,35 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument("--related-executor", action="append", default=[])
     submit.add_argument("--related-rfp", action="append", default=[])
 
-    extract = commands.add_parser(
-        "extract", help="Extract the content of a version again, replacing the old result."
-    )
-    extract.add_argument("item_id")
-    extract.add_argument("--version-tag", help="Default: the active version.")
-
-    read_pages = commands.add_parser(
-        "read-pages", help="Read PDF pages without a text layer with the local LVM."
-    )
-    read_pages.add_argument("item_id")
-    read_pages.add_argument("--version-tag", help="Default: the active version.")
-    read_pages.add_argument(
-        "--page",
-        type=int,
-        action="append",
-        help="A page to read, starting at 1. Repeat for more. Default: every page without text.",
-    )
+    status = commands.add_parser("status", help="Print the status of an ingestion.")
+    status.add_argument("ingestion_id")
 
     show = commands.add_parser("show-content", help="Print the extracted blocks of a version.")
     show.add_argument("item_id")
-    show.add_argument("--version-tag", help="Default: the active version.")
+    show.add_argument("--version", dest="version_tag", help="Default: the active version.")
     show.add_argument("--limit", type=int, default=DEFAULT_SHOWN_BLOCKS, help="Blocks to print.")
+
+    reingest = commands.add_parser(
+        "reingest", help="Queue a version for ingestion again, replacing its content."
+    )
+    reingest.add_argument("item_id")
+    reingest.add_argument("--version", dest="version_tag", help="Default: the active version.")
+
+    worker = commands.add_parser("worker", help="Ingestion workers.")
+    worker_run = worker.add_subparsers(dest="action", required=True).add_parser(
+        "run", help="Run the steps of one lane until stopped (ADR 0005)."
+    )
+    worker_run.add_argument("--lane", required=True, choices=[lane.value for lane in IngestionLane])
+
+    relay = commands.add_parser("relay", help="The outbox relay.")
+    relay.add_subparsers(dest="action", required=True).add_parser(
+        "run", help="Publish outbox messages and resend lost ones until stopped."
+    )
+
+    api = commands.add_parser("api", help="The ingestion API.")
+    api.add_subparsers(dest="action", required=True).add_parser(
+        "run", help="Serve the API on API_HOST:API_PORT until stopped (ADR 0006)."
+    )
     return parser
 
 
@@ -104,20 +110,39 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
     """Run one command and return the process exit code."""
     arguments = build_parser().parse_args(argv)
     settings = settings or Settings()
+    match arguments.command:
+        case "worker":
+            run_worker(IngestionLane(arguments.lane), settings)
+            return EXIT_OK
+        case "relay":
+            run_relay(settings)
+            return EXIT_OK
+        case "api":
+            run_api(settings)
+            return EXIT_OK
+    return _run_command(arguments, settings)
+
+
+def run() -> None:
+    """Run the `knowledge` console script."""
+    sys.exit(main())
+
+
+def _run_command(arguments: argparse.Namespace, settings: Settings) -> int:
     configure_logging(settings)
     request_id = uuid.uuid4().hex[:8]
     structlog.contextvars.bind_contextvars(request_id=request_id)
-    commands: dict[str, Callable[[argparse.Namespace, KnowledgeWiring], dict[str, Any]]] = {
+    commands: dict[str, Command] = {
         "submit": _submit,
-        "extract": _extract,
-        "read-pages": _read_pages,
+        "status": _status,
         "show-content": _show_content,
+        "reingest": _reingest,
     }
 
     knowledge: KnowledgeWiring | None = None
     try:
         knowledge = build_knowledge(settings)
-        result = commands[arguments.command](arguments, knowledge)
+        result = commands[arguments.command](arguments, knowledge, settings)
     except ProjectError as error:
         log.exception("command_failed", code=error.code)
         _write_json(sys.stderr, problem_from_error(error, request_id=request_id))
@@ -135,7 +160,9 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
     return EXIT_OK
 
 
-def _submit(arguments: argparse.Namespace, knowledge: KnowledgeWiring) -> dict[str, Any]:
+def _submit(
+    arguments: argparse.Namespace, knowledge: KnowledgeWiring, settings: Settings
+) -> dict[str, Any]:
     file: Path = arguments.file
     try:
         content = file.read_bytes()
@@ -166,135 +193,50 @@ def _submit(arguments: argparse.Namespace, knowledge: KnowledgeWiring) -> dict[s
             request_id=_request_id(),
         )
     )
-    # TODO(step 5 of the ingestion plan): the text worker runs this step; until it
-    # exists the CLI runs it in-process so `submit` still extracts.
-    try:
-        ingestion = knowledge.extract_handler.extract(
-            ExtractKnowledgeContent(ingestion_id=receipt.ingestion_id)
-        )
-    except InfrastructureError as error:
-        # Registration stands; the run stays open for a retry.
-        log.warning("knowledge_extraction_deferred", code=error.code)
-        ingestion = knowledge.queries.get_ingestion(receipt.ingestion_id)
-    return {
-        "item_id": receipt.item_id,
-        "version_tag": receipt.version_tag.value,
-        "node_id": arguments.node,
-        "file_name": file.name,
-        **_ingestion_summary(ingestion),
-        "extraction": _extraction_or_none(receipt.item_id, receipt.version_tag, knowledge),
-    }
+    return receipt_body(receipt)
 
 
-def _extract(arguments: argparse.Namespace, knowledge: KnowledgeWiring) -> dict[str, Any]:
+def _status(
+    arguments: argparse.Namespace, knowledge: KnowledgeWiring, settings: Settings
+) -> dict[str, Any]:
+    return ingestion_body(knowledge.queries.get_ingestion(arguments.ingestion_id))
+
+
+def _show_content(
+    arguments: argparse.Namespace, knowledge: KnowledgeWiring, settings: Settings
+) -> dict[str, Any]:
+    version_tag, extracted = knowledge.queries.get_content(
+        arguments.item_id, _version_tag(arguments)
+    )
+    return content_body(
+        arguments.item_id,
+        version_tag,
+        extracted,
+        min_page_text_chars=settings.min_page_text_chars,
+        limit=arguments.limit,
+    )
+
+
+def _reingest(
+    arguments: argparse.Namespace, knowledge: KnowledgeWiring, settings: Settings
+) -> dict[str, Any]:
     receipt = knowledge.reingest_handler.reingest(
         ReingestKnowledgeItem(
             item_id=arguments.item_id,
-            version_tag=VersionTag(arguments.version_tag) if arguments.version_tag else None,
+            version_tag=_version_tag(arguments),
             request_id=_request_id(),
         )
     )
-    ingestion = knowledge.extract_handler.extract(
-        ExtractKnowledgeContent(ingestion_id=receipt.ingestion_id)
-    )
-    return {
-        "item_id": receipt.item_id,
-        "version_tag": receipt.version_tag.value,
-        **_ingestion_summary(ingestion),
-        "extraction": _extraction_or_none(receipt.item_id, receipt.version_tag, knowledge),
-    }
+    return receipt_body(receipt)
 
 
-def _read_pages(arguments: argparse.Namespace, knowledge: KnowledgeWiring) -> dict[str, Any]:
-    item_id: str = arguments.item_id
-    version_tag, _ = knowledge.queries.get_content(
-        item_id, VersionTag(arguments.version_tag) if arguments.version_tag else None
-    )
-    waiting = knowledge.ingestion_repository.find_running(item_id, version_tag)
-    if waiting is None or waiting.status != IngestionStatus.READING_PAGES:
-        # TODO(step 6 of the ingestion plan): reading chosen pages of a finished run
-        # needs its own command; until then a new run is extracted first.
-        receipt = knowledge.reingest_handler.reingest(
-            ReingestKnowledgeItem(item_id=item_id, version_tag=version_tag)
-        )
-        waiting = knowledge.extract_handler.extract(
-            ExtractKnowledgeContent(ingestion_id=receipt.ingestion_id)
-        )
-    ingestion = knowledge.read_pages_handler.read(
-        ReadPagesWithLvm(
-            ingestion_id=waiting.ingestion_id,
-            page_numbers=tuple(arguments.page) if arguments.page else None,
-        )
-    )
-    return {
-        "item_id": item_id,
-        "version_tag": version_tag.value,
-        **_ingestion_summary(ingestion),
-        "extraction": _extraction_or_none(item_id, version_tag, knowledge),
-    }
-
-
-def _show_content(arguments: argparse.Namespace, knowledge: KnowledgeWiring) -> dict[str, Any]:
-    version_tag, extracted = knowledge.queries.get_content(
-        arguments.item_id, VersionTag(arguments.version_tag) if arguments.version_tag else None
-    )
-    return {
-        "item_id": arguments.item_id,
-        "version_tag": version_tag.value,
-        "extraction": _summary(extracted, knowledge),
-        "blocks": [
-            {
-                "order": block.order,
-                "kind": block.kind.value,
-                "page_number": block.page_number,
-                "heading_path": list(block.heading_path),
-                "source": block.source.value,
-                "needs_human_review": block.needs_human_review,
-                "review_reason": block.review_reason,
-                "text": block.text,
-            }
-            for block in extracted.blocks[: arguments.limit]
-        ],
-    }
+def _version_tag(arguments: argparse.Namespace) -> VersionTag | None:
+    return VersionTag(arguments.version_tag) if arguments.version_tag else None
 
 
 def _request_id() -> str | None:
     bound: str | None = structlog.contextvars.get_contextvars().get("request_id")
     return bound
-
-
-def _ingestion_summary(ingestion: KnowledgeIngestion) -> dict[str, Any]:
-    return {
-        "ingestion_id": ingestion.ingestion_id,
-        "status": ingestion.status.value,
-        "failure_code": ingestion.failure_code,
-    }
-
-
-def _extraction_or_none(
-    item_id: str, version_tag: VersionTag, knowledge: KnowledgeWiring
-) -> dict[str, Any] | None:
-    try:
-        _, extracted = knowledge.queries.get_content(item_id, version_tag)
-    except ExtractedContentNotFoundError:
-        return None
-    return _summary(extracted, knowledge)
-
-
-def _summary(extracted: ExtractedContent, knowledge: KnowledgeWiring) -> dict[str, Any]:
-    return {
-        "document_format": extracted.document_format.value,
-        "page_count": extracted.page_count,
-        "block_count": len(extracted.blocks),
-        "table_count": sum(block.kind == ContentBlockKind.TABLE for block in extracted.blocks),
-        "lvm_block_count": sum(block.source == ContentSource.LVM for block in extracted.blocks),
-        "blocks_for_review": sum(block.needs_human_review for block in extracted.blocks),
-        "pages_without_text": list(
-            extracted.pages_without_text(
-                min_page_text_chars=knowledge.extract_handler.min_page_text_chars
-            )
-        ),
-    }
 
 
 def _write_json(stream: TextIO, body: Mapping[str, object]) -> None:

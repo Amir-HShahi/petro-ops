@@ -51,3 +51,20 @@ def test_rabbitmq_url_is_accepted_when_host_is_loopback():
 def test_rabbitmq_url_is_rejected_when_host_is_not_loopback(url: str):
     with pytest.raises(ValidationError, match="loopback"):
         Settings(rabbitmq_url=url)
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])
+def test_api_host_is_accepted_when_it_is_loopback(host: str):
+    assert Settings(api_host=host).api_host == host
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.10", "api.example.com"])
+def test_api_host_is_rejected_when_it_is_not_loopback(host: str):
+    with pytest.raises(ValidationError, match="loopback"):
+        Settings(api_host=host)
+
+
+@pytest.mark.parametrize("port", [0, 65536])
+def test_api_port_is_rejected_when_out_of_range(port: int):
+    with pytest.raises(ValidationError):
+        Settings(api_port=port)

@@ -41,27 +41,19 @@ The core loads one large model at a time and unloads it when its work is done, b
 
 ## Ingesting documents
 
-A file goes through three steps, one after the other, when it is submitted:
+Submitting a file registers it and queues a KnowledgeIngestion; workers do the rest (ADR 0005):
 
-1. **Register.** The format is read from the file's content (DOC, DOCX or PDF). The file is kept in `data/source_files/` and a KnowledgeItem with its first version is stored in `data/knowledge.sqlite3`. The owning Node must be in `fixtures/registry/nodes.csv`.
-2. **Extract.** The text and tables are read in order, with the page (PDF) or heading path (DOC, DOCX) of each block.
-3. **LVM assist.** PDF pages without a text layer are read by Gemma, and every table on them is checked against `glm-ocr`. A table the two models read differently is marked for human review. This takes about a minute per page.
-
-If Extract or LVM assist fails, for example because LibreOffice or Ollama is missing, the item stays registered and the step can be run again later.
-
-Run the commands from the repository root:
+1. **Register.** The format is read from the file's content (DOC, DOCX or PDF). The file is kept in `data/source_files/`, and the KnowledgeItem, its ingestion and the message that starts it are stored in Postgres in one transaction. The owning Node must be in `fixtures/registry/nodes.csv`.
+2. **Extract** (text worker). Docling reads the text and tables in order, with the page (PDF) or heading path (DOC, DOCX) of each block. DOC files are converted by LibreOffice first.
+3. **Read pages** (vision worker). PDF pages without a text layer are read by Gemma, and every table on them is checked against `glm-ocr`. A table the two models read differently is marked for human review. This takes about a minute per page.
 
 ```bash
-# Register a file; Extract and LVM assist run right after it
-uv run python -m offline_rag.knowledge.interface.cli submit fixtures/docs/cases/scanned_sp12_riser_r3_baseline_2021.pdf --node sp12_inspection_team --document-type inspection_report
-
-# Print the extracted blocks of a version
-uv run python -m offline_rag.knowledge.interface.cli show-content <item_id> --limit 20
-
-# Run a step again for a version
-uv run python -m offline_rag.knowledge.interface.cli extract <item_id> --version-tag v1
-uv run python -m offline_rag.knowledge.interface.cli read-pages <item_id> --page 3
+uv run knowledge submit fixtures/docs/synthetic/inspection_sp12_riser_r3_2024.docx --node sp12_inspection_team
+uv run knowledge status <ingestion_id>
+uv run knowledge show-content <item_id> --limit 20
 ```
+
+The same actions are available over HTTP with `uv run knowledge api run`. How to start Postgres, RabbitMQ, the relay, the workers and the API is in [docs/running-ingestion.md](docs/running-ingestion.md).
 
 Each command prints its result to stdout as JSON. Errors go to stderr as [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details with a code from `docs/errors.md`, and log lines go to stderr as JSON. Set `LOG_LEVEL=debug` to see every step. Add `--help` to any command for all its options.
 

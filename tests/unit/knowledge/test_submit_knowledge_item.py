@@ -15,9 +15,13 @@ from offline_rag.knowledge.application.commands import SubmitKnowledgeItem
 from offline_rag.knowledge.application.errors import (
     KnowledgeItemNotFoundError,
     OwnerNodeNotFoundError,
+    SourceFileTooLargeError,
 )
 from offline_rag.knowledge.application.ports import IngestionLane
-from offline_rag.knowledge.application.submit_knowledge_item import SubmitKnowledgeItemHandler
+from offline_rag.knowledge.application.submit_knowledge_item import (
+    BYTES_PER_MB,
+    SubmitKnowledgeItemHandler,
+)
 from offline_rag.knowledge.domain.document_format import DocumentFormat
 from offline_rag.knowledge.domain.errors import (
     EmptySourceFileError,
@@ -31,6 +35,7 @@ from offline_rag.shared_kernel.node_identifier import NodeIdentifier
 
 PDF_CONTENT = b"%PDF-1.7\nriser R-3 wall thickness"
 OWNER = NodeIdentifier("sp12_inspection_team")
+MAX_FILE_MB = 1
 
 
 @pytest.fixture
@@ -66,6 +71,7 @@ def handler(
         clock=FakeClock(),
         id_generator=FakeIdGenerator(),
         event_publisher=publisher,
+        max_file_mb=MAX_FILE_MB,
     )
 
 
@@ -138,6 +144,10 @@ def test_each_submission_gets_its_own_item_when_same_file_is_submitted_twice(
         (_command(owner=NodeIdentifier("unknown_node")), OwnerNodeNotFoundError),
         (_command(content=b""), EmptySourceFileError),
         (
+            _command(content=PDF_CONTENT.ljust(MAX_FILE_MB * BYTES_PER_MB + 1, b" ")),
+            SourceFileTooLargeError,
+        ),
+        (
             _command(content=b"\x89PNG\r\n\x1a\n", file_name="photo.png"),
             UnsupportedDocumentFormatError,
         ),
@@ -208,3 +218,13 @@ def test_repository_raises_not_found_when_item_does_not_exist(
         repository.get_by_id("ki-404")
 
     assert caught.value.code == "KNOWLEDGE_ITEM_NOT_FOUND"
+
+
+def test_file_is_accepted_when_it_is_exactly_the_size_limit(
+    handler: SubmitKnowledgeItemHandler, repository: InMemoryKnowledgeItemRepository
+):
+    content = PDF_CONTENT.ljust(MAX_FILE_MB * BYTES_PER_MB, b" ")
+
+    item_id = handler.submit(_command(content=content)).item_id
+
+    assert item_id in repository.items

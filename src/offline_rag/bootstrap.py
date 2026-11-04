@@ -29,19 +29,19 @@ from offline_rag.knowledge.application.reingest_knowledge_item import (
 from offline_rag.knowledge.application.run_ingestion_step import RunIngestionStepHandler
 from offline_rag.knowledge.application.submit_knowledge_item import SubmitKnowledgeItemHandler
 from offline_rag.knowledge.infrastructure.csv_node_directory import CsvNodeDirectory
-from offline_rag.knowledge.infrastructure.docx_parser import DocxParser
+from offline_rag.knowledge.infrastructure.docling_document_parser import DoclingDocumentParser
 from offline_rag.knowledge.infrastructure.in_process_event_publisher import (
     InProcessEventPublisher,
 )
-from offline_rag.knowledge.infrastructure.libreoffice_doc_parser import LibreOfficeDocParser
-from offline_rag.knowledge.infrastructure.local_document_parser import LocalDocumentParser
+from offline_rag.knowledge.infrastructure.libreoffice_doc_converter import (
+    LibreOfficeDocConverter,
+)
 from offline_rag.knowledge.infrastructure.local_source_file_store import LocalSourceFileStore
 from offline_rag.knowledge.infrastructure.model_registry import load_registered_prompt
 from offline_rag.knowledge.infrastructure.ollama_client import OllamaClient
 from offline_rag.knowledge.infrastructure.ollama_lvm import OllamaLvm
 from offline_rag.knowledge.infrastructure.ollama_table_ocr import OllamaTableOcr
 from offline_rag.knowledge.infrastructure.pdfium_page_renderer import PdfiumPageRenderer
-from offline_rag.knowledge.infrastructure.pdfplumber_pdf_parser import PdfplumberPdfParser
 from offline_rag.knowledge.infrastructure.postgres_database import PostgresDatabase
 from offline_rag.knowledge.infrastructure.postgres_extracted_content_repository import (
     PostgresExtractedContentRepository,
@@ -124,19 +124,15 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
     clock = SystemClock()
     id_generator = UuidIdGenerator()
     event_publisher = InProcessEventPublisher()
-    docx_parser = DocxParser()
-
     extract_handler = ExtractKnowledgeContentHandler(
         ingestion_repository=ingestion_repository,
         repository=knowledge_item_repository,
         source_file_store=source_file_store,
-        parser=LocalDocumentParser(
-            docx_parser=docx_parser,
-            pdf_parser=PdfplumberPdfParser(),
-            doc_parser=LibreOfficeDocParser(
+        parser=DoclingDocumentParser(
+            models_dir=settings.docling_models_dir,
+            doc_converter=LibreOfficeDocConverter(
                 soffice_path=settings.libreoffice_path,
                 timeout_s=settings.doc_conversion_timeout_s,
-                docx_parser=docx_parser,
             ),
         ),
         extracted_content_repository=extracted_content_repository,
@@ -178,6 +174,7 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
         clock=clock,
         id_generator=id_generator,
         event_publisher=event_publisher,
+        max_file_mb=settings.max_file_mb,
     )
     fail_handler = FailKnowledgeIngestionHandler(
         ingestion_repository=ingestion_repository, clock=clock
