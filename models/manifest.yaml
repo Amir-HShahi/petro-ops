@@ -45,10 +45,13 @@ models:
     digest: 38044be4f923
     quantization: Q4_0
     context_tokens: 262144
+    # A scanned page costs about 1,000 image tokens; a dense table needs a long answer.
     default_params:
       temperature: 0
       seed: 42
       is_thinking_enabled: false
+      context_tokens: 8192
+      max_output_tokens: 4096
     status: chosen
 
   # Required cross-check for tables on scanned pages (ADR 0002).
@@ -61,8 +64,11 @@ models:
     digest: 89d735dd9c07
     quantization: F16
     context_tokens: 131072
+    # A page costs about 2,800 image tokens here.
     default_params:
       temperature: 0
+      context_tokens: 8192
+      max_output_tokens: 4096
     status: chosen
 
   - role: reranker

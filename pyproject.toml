@@ -8,7 +8,12 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "pdfplumber>=0.11.10",
     "pydantic-settings>=2.16.2",
+    "pypdfium2>=5.14.0",
+    "python-docx>=1.2.0",
+    "pyyaml>=6.0.3",
+    "structlog>=26.1.0",
 ]
 
 [build-system]
@@ -43,9 +48,16 @@ strict = true
 mypy_path = "src"
 packages = ["offline_rag"]
 
+# pypdfium2 ships no type information.
+[[tool.mypy.overrides]]
+module = ["pypdfium2", "pypdfium2.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --cov=offline_rag --cov-report=term-missing"
+# Lets tests import the shared fakes as `tests.fakes`.
+pythonpath = ["."]
+addopts = "-ra --strict-markers --import-mode=importlib --cov=offline_rag --cov-report=term-missing"
 markers = [
     "slow: long-running tests (real models, full benchmark)",
     "integration: real adapters wired together",
@@ -54,12 +66,19 @@ markers = [
     "e2e: end-to-end scenarios",
 ]
 
+# The 80% gate is set in CI, where unit and integration tests run together.
+# A unit-only run leaves the adapters uncovered, so it has no gate.
 [tool.coverage.report]
-fail_under = 80
 skip_empty = true
 
 [tool.importlinter]
 root_package = "offline_rag"
+
+[[tool.importlinter.contracts]]
+name = "Hexagonal layers in each bounded context"
+type = "layers"
+containers = ["offline_rag.knowledge"]
+layers = ["interface", "infrastructure", "application", "domain"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
@@ -77,6 +96,6 @@ dev = [
     "pre-commit>=4.7.0",
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
-    "pyyaml>=6.0.3",
     "ruff>=0.17.3",
+    "types-pyyaml>=6.0.12.20261103",
 ]
