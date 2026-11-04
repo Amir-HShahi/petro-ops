@@ -19,6 +19,7 @@ from offline_rag.bootstrap import KnowledgeWiring, build_knowledge, configure_lo
 from offline_rag.knowledge.application.commands import (
     ExtractKnowledgeContent,
     ReadPagesWithLvm,
+    ReingestKnowledgeItem,
     SubmitKnowledgeItem,
 )
 from offline_rag.knowledge.application.errors import ExtractedContentNotFoundError
@@ -27,6 +28,7 @@ from offline_rag.knowledge.domain.extracted_content import (
     ContentSource,
     ExtractedContent,
 )
+from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus, KnowledgeIngestion
 from offline_rag.knowledge.domain.knowledge_scope import ConfidentialityLevel, KnowledgeScope
 from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.knowledge.interface.errors import SourceFileNotReadableError
@@ -35,7 +37,7 @@ from offline_rag.knowledge.interface.problem_details import (
     problem_from_error,
 )
 from offline_rag.settings import Settings
-from offline_rag.shared_kernel.errors import ProjectError
+from offline_rag.shared_kernel.errors import InfrastructureError, ProjectError
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
 
@@ -77,13 +79,13 @@ def build_parser() -> argparse.ArgumentParser:
         "extract", help="Extract the content of a version again, replacing the old result."
     )
     extract.add_argument("item_id")
-    extract.add_argument("--version-tag", default="v1")
+    extract.add_argument("--version-tag", help="Default: the active version.")
 
     read_pages = commands.add_parser(
         "read-pages", help="Read PDF pages without a text layer with the local LVM."
     )
     read_pages.add_argument("item_id")
-    read_pages.add_argument("--version-tag", default="v1")
+    read_pages.add_argument("--version-tag", help="Default: the active version.")
     read_pages.add_argument(
         "--page",
         type=int,
@@ -93,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     show = commands.add_parser("show-content", help="Print the extracted blocks of a version.")
     show.add_argument("item_id")
-    show.add_argument("--version-tag", default="v1")
+    show.add_argument("--version-tag", help="Default: the active version.")
     show.add_argument("--limit", type=int, default=DEFAULT_SHOWN_BLOCKS, help="Blocks to print.")
     return parser
 
@@ -112,8 +114,10 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
         "show-content": _show_content,
     }
 
+    knowledge: KnowledgeWiring | None = None
     try:
-        result = commands[arguments.command](arguments, build_knowledge(settings))
+        knowledge = build_knowledge(settings)
+        result = commands[arguments.command](arguments, knowledge)
     except ProjectError as error:
         log.exception("command_failed", code=error.code)
         _write_json(sys.stderr, problem_from_error(error, request_id=request_id))
@@ -123,6 +127,8 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
         _write_json(sys.stderr, problem_for_unexpected_error(request_id=request_id))
         return EXIT_FAILED
     finally:
+        if knowledge is not None:
+            knowledge.database.close()
         structlog.contextvars.unbind_contextvars("request_id")
 
     _write_json(sys.stdout, result)
@@ -136,7 +142,7 @@ def _submit(arguments: argparse.Namespace, knowledge: KnowledgeWiring) -> dict[s
     except OSError as error:
         raise SourceFileNotReadableError(file.name) from error
 
-    item_id = knowledge.submit_handler.submit(
+    receipt = knowledge.submit_handler.submit(
         SubmitKnowledgeItem(
             owner_node_id=NodeIdentifier(arguments.node),
             source_file_name=file.name,
@@ -157,55 +163,81 @@ def _submit(arguments: argparse.Namespace, knowledge: KnowledgeWiring) -> dict[s
                 tags=tuple(arguments.tag),
                 source_reliability=arguments.source_reliability,
             ),
+            request_id=_request_id(),
         )
     )
-    version_tag = VersionTag.for_sequence_number(1)
+    # TODO(step 5 of the ingestion plan): the text worker runs this step; until it
+    # exists the CLI runs it in-process so `submit` still extracts.
     try:
-        extracted = knowledge.extracted_content_repository.get(item_id, version_tag)
-        extraction: dict[str, Any] | None = _summary(extracted, knowledge)
-    except ExtractedContentNotFoundError:
-        # Registration stands; the failure was logged and `extract` can retry it.
-        extraction = None
+        ingestion = knowledge.extract_handler.extract(
+            ExtractKnowledgeContent(ingestion_id=receipt.ingestion_id)
+        )
+    except InfrastructureError as error:
+        # Registration stands; the run stays open for a retry.
+        log.warning("knowledge_extraction_deferred", code=error.code)
+        ingestion = knowledge.queries.get_ingestion(receipt.ingestion_id)
     return {
-        "item_id": item_id,
-        "version_tag": version_tag.value,
+        "item_id": receipt.item_id,
+        "version_tag": receipt.version_tag.value,
         "node_id": arguments.node,
         "file_name": file.name,
-        "extraction": extraction,
+        **_ingestion_summary(ingestion),
+        "extraction": _extraction_or_none(receipt.item_id, receipt.version_tag, knowledge),
     }
 
 
 def _extract(arguments: argparse.Namespace, knowledge: KnowledgeWiring) -> dict[str, Any]:
-    version_tag = VersionTag(arguments.version_tag)
-    extracted = knowledge.extract_handler.extract(
-        ExtractKnowledgeContent(item_id=arguments.item_id, version_tag=version_tag)
+    receipt = knowledge.reingest_handler.reingest(
+        ReingestKnowledgeItem(
+            item_id=arguments.item_id,
+            version_tag=VersionTag(arguments.version_tag) if arguments.version_tag else None,
+            request_id=_request_id(),
+        )
+    )
+    ingestion = knowledge.extract_handler.extract(
+        ExtractKnowledgeContent(ingestion_id=receipt.ingestion_id)
     )
     return {
-        "item_id": arguments.item_id,
-        "version_tag": version_tag.value,
-        "extraction": _summary(extracted, knowledge),
+        "item_id": receipt.item_id,
+        "version_tag": receipt.version_tag.value,
+        **_ingestion_summary(ingestion),
+        "extraction": _extraction_or_none(receipt.item_id, receipt.version_tag, knowledge),
     }
 
 
 def _read_pages(arguments: argparse.Namespace, knowledge: KnowledgeWiring) -> dict[str, Any]:
-    version_tag = VersionTag(arguments.version_tag)
-    content = knowledge.read_pages_handler.read(
+    item_id: str = arguments.item_id
+    version_tag, _ = knowledge.queries.get_content(
+        item_id, VersionTag(arguments.version_tag) if arguments.version_tag else None
+    )
+    waiting = knowledge.ingestion_repository.find_running(item_id, version_tag)
+    if waiting is None or waiting.status != IngestionStatus.READING_PAGES:
+        # TODO(step 6 of the ingestion plan): reading chosen pages of a finished run
+        # needs its own command; until then a new run is extracted first.
+        receipt = knowledge.reingest_handler.reingest(
+            ReingestKnowledgeItem(item_id=item_id, version_tag=version_tag)
+        )
+        waiting = knowledge.extract_handler.extract(
+            ExtractKnowledgeContent(ingestion_id=receipt.ingestion_id)
+        )
+    ingestion = knowledge.read_pages_handler.read(
         ReadPagesWithLvm(
-            item_id=arguments.item_id,
-            version_tag=version_tag,
+            ingestion_id=waiting.ingestion_id,
             page_numbers=tuple(arguments.page) if arguments.page else None,
         )
     )
     return {
-        "item_id": arguments.item_id,
+        "item_id": item_id,
         "version_tag": version_tag.value,
-        "extraction": _summary(content, knowledge),
+        **_ingestion_summary(ingestion),
+        "extraction": _extraction_or_none(item_id, version_tag, knowledge),
     }
 
 
 def _show_content(arguments: argparse.Namespace, knowledge: KnowledgeWiring) -> dict[str, Any]:
-    version_tag = VersionTag(arguments.version_tag)
-    extracted = knowledge.extracted_content_repository.get(arguments.item_id, version_tag)
+    version_tag, extracted = knowledge.queries.get_content(
+        arguments.item_id, VersionTag(arguments.version_tag) if arguments.version_tag else None
+    )
     return {
         "item_id": arguments.item_id,
         "version_tag": version_tag.value,
@@ -224,6 +256,29 @@ def _show_content(arguments: argparse.Namespace, knowledge: KnowledgeWiring) -> 
             for block in extracted.blocks[: arguments.limit]
         ],
     }
+
+
+def _request_id() -> str | None:
+    bound: str | None = structlog.contextvars.get_contextvars().get("request_id")
+    return bound
+
+
+def _ingestion_summary(ingestion: KnowledgeIngestion) -> dict[str, Any]:
+    return {
+        "ingestion_id": ingestion.ingestion_id,
+        "status": ingestion.status.value,
+        "failure_code": ingestion.failure_code,
+    }
+
+
+def _extraction_or_none(
+    item_id: str, version_tag: VersionTag, knowledge: KnowledgeWiring
+) -> dict[str, Any] | None:
+    try:
+        _, extracted = knowledge.queries.get_content(item_id, version_tag)
+    except ExtractedContentNotFoundError:
+        return None
+    return _summary(extracted, knowledge)
 
 
 def _summary(extracted: ExtractedContent, knowledge: KnowledgeWiring) -> dict[str, Any]:

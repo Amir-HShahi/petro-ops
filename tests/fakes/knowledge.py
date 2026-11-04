@@ -1,15 +1,18 @@
 """In-memory fakes of the Knowledge Management ports, for unit tests."""
 
+import copy
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 
 from offline_rag.knowledge.application.errors import (
     ExtractedContentNotFoundError,
+    KnowledgeIngestionNotFoundError,
     KnowledgeItemNotFoundError,
 )
-from offline_rag.knowledge.application.ports import PageReading
+from offline_rag.knowledge.application.ports import OutboxMessage, PageReading
 from offline_rag.knowledge.domain.document_format import DocumentFormat
 from offline_rag.knowledge.domain.extracted_content import ExtractedContent
+from offline_rag.knowledge.domain.knowledge_ingestion import KnowledgeIngestion
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
 from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.knowledge.infrastructure.errors import SourceFileStorageError
@@ -31,6 +34,52 @@ class InMemoryKnowledgeItemRepository:
 
     def add(self, item: KnowledgeItem) -> None:
         self.items[item.item_id] = item
+
+
+class InMemoryKnowledgeIngestionRepository:
+    """Keeps copies of ingestions by id, and every outbox message in order.
+
+    Items given with a new ingestion go into the item repository, as the real
+    adapter writes both in one transaction.
+    """
+
+    def __init__(self, item_repository: InMemoryKnowledgeItemRepository) -> None:
+        self.item_repository = item_repository
+        self.ingestions: dict[str, KnowledgeIngestion] = {}
+        self.messages: list[OutboxMessage] = []
+
+    def add_with_item(
+        self, item: KnowledgeItem, ingestion: KnowledgeIngestion, message: OutboxMessage
+    ) -> None:
+        self.item_repository.add(item)
+        self.add(ingestion, message)
+
+    def add(self, ingestion: KnowledgeIngestion, message: OutboxMessage) -> None:
+        self.save(ingestion, message)
+
+    def save(self, ingestion: KnowledgeIngestion, message: OutboxMessage | None = None) -> None:
+        # A copy, so a test sees what was saved, not later changes to the object.
+        self.ingestions[ingestion.ingestion_id] = copy.deepcopy(ingestion)
+        if message is not None:
+            self.messages.append(message)
+
+    def get_by_id(self, ingestion_id: str) -> KnowledgeIngestion:
+        try:
+            return copy.deepcopy(self.ingestions[ingestion_id])
+        except KeyError as error:
+            raise KnowledgeIngestionNotFoundError(ingestion_id) from error
+
+    def find_running(self, item_id: str, version_tag: VersionTag) -> KnowledgeIngestion | None:
+        return next(
+            (
+                copy.deepcopy(ingestion)
+                for ingestion in self.ingestions.values()
+                if ingestion.item_id == item_id
+                and ingestion.version_tag == version_tag
+                and ingestion.is_running
+            ),
+            None,
+        )
 
 
 class FakeNodeDirectory:

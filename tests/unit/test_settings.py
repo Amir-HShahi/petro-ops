@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from offline_rag.settings import Settings
 
 ENV_EXAMPLE = Path(__file__).parents[2] / ".env.example"
@@ -14,3 +17,23 @@ def test_env_example_lists_exactly_the_settings_fields_when_compared():
     fields = {name.upper() for name in Settings.model_fields}
 
     assert _variable_names(ENV_EXAMPLE) == fields
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "[::1]"])
+def test_database_url_is_accepted_when_host_is_loopback(host: str):
+    url = f"postgresql://user:secret@{host}:5432/petro_ops"
+
+    assert Settings(database_url=url).database_url == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://user@db.example.com/petro_ops",
+        "postgresql://10.0.0.5/petro_ops",
+        "postgresql:///petro_ops",
+    ],
+)
+def test_database_url_is_rejected_when_host_is_not_loopback(url: str):
+    with pytest.raises(ValidationError, match="loopback"):
+        Settings(database_url=url)

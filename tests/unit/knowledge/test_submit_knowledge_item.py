@@ -6,6 +6,7 @@ from tests.fakes.knowledge import (
     FakeIdGenerator,
     FakeNodeDirectory,
     InMemoryEventPublisher,
+    InMemoryKnowledgeIngestionRepository,
     InMemoryKnowledgeItemRepository,
     InMemorySourceFileStore,
 )
@@ -15,6 +16,7 @@ from offline_rag.knowledge.application.errors import (
     KnowledgeItemNotFoundError,
     OwnerNodeNotFoundError,
 )
+from offline_rag.knowledge.application.ports import IngestionLane
 from offline_rag.knowledge.application.submit_knowledge_item import SubmitKnowledgeItemHandler
 from offline_rag.knowledge.domain.document_format import DocumentFormat
 from offline_rag.knowledge.domain.errors import (
@@ -22,6 +24,7 @@ from offline_rag.knowledge.domain.errors import (
     UnsupportedDocumentFormatError,
 )
 from offline_rag.knowledge.domain.events import KnowledgeItemSubmitted, MetadataRecorded
+from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus
 from offline_rag.knowledge.domain.knowledge_scope import ConfidentialityLevel, KnowledgeScope
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
@@ -36,6 +39,11 @@ def repository() -> InMemoryKnowledgeItemRepository:
 
 
 @pytest.fixture
+def ingestions(repository: InMemoryKnowledgeItemRepository) -> InMemoryKnowledgeIngestionRepository:
+    return InMemoryKnowledgeIngestionRepository(repository)
+
+
+@pytest.fixture
 def file_store() -> InMemorySourceFileStore:
     return InMemorySourceFileStore()
 
@@ -47,12 +55,12 @@ def publisher() -> InMemoryEventPublisher:
 
 @pytest.fixture
 def handler(
-    repository: InMemoryKnowledgeItemRepository,
+    ingestions: InMemoryKnowledgeIngestionRepository,
     file_store: InMemorySourceFileStore,
     publisher: InMemoryEventPublisher,
 ) -> SubmitKnowledgeItemHandler:
     return SubmitKnowledgeItemHandler(
-        repository=repository,
+        ingestion_repository=ingestions,
         node_directory=FakeNodeDirectory(["sp12_inspection_team", "platform_sp12"]),
         source_file_store=file_store,
         clock=FakeClock(),
@@ -78,7 +86,7 @@ def _command(
 def test_item_is_stored_with_first_version_when_file_is_submitted(
     handler: SubmitKnowledgeItemHandler, repository: InMemoryKnowledgeItemRepository
 ):
-    item_id = handler.submit(_command())
+    item_id = handler.submit(_command()).item_id
 
     item = repository.get_by_id(item_id)
     assert item_id == "ki-1"
@@ -94,7 +102,7 @@ def test_original_file_is_kept_when_file_is_submitted(
     repository: InMemoryKnowledgeItemRepository,
     file_store: InMemorySourceFileStore,
 ):
-    item_id = handler.submit(_command())
+    item_id = handler.submit(_command()).item_id
 
     reference = repository.get_by_id(item_id).active_version.source_file_reference
     assert file_store.files[reference] == (
@@ -117,8 +125,8 @@ def test_submitted_and_metadata_events_are_published_when_file_is_submitted(
 def test_each_submission_gets_its_own_item_when_same_file_is_submitted_twice(
     handler: SubmitKnowledgeItemHandler, repository: InMemoryKnowledgeItemRepository
 ):
-    first_id = handler.submit(_command())
-    second_id = handler.submit(_command())
+    first_id = handler.submit(_command()).item_id
+    second_id = handler.submit(_command()).item_id
 
     assert first_id != second_id
     assert len(repository.items) == 2
@@ -140,6 +148,7 @@ def test_nothing_is_stored_or_published_when_submission_is_rejected(
     repository: InMemoryKnowledgeItemRepository,
     file_store: InMemorySourceFileStore,
     publisher: InMemoryEventPublisher,
+    ingestions: InMemoryKnowledgeIngestionRepository,
     command: SubmitKnowledgeItem,
     error: type[Exception],
 ):
@@ -149,6 +158,37 @@ def test_nothing_is_stored_or_published_when_submission_is_rejected(
     assert repository.items == {}
     assert file_store.files == {}
     assert publisher.events == []
+    assert ingestions.ingestions == {}
+    assert ingestions.messages == []
+
+
+def test_ingestion_is_queued_for_a_text_worker_when_file_is_submitted(
+    handler: SubmitKnowledgeItemHandler, ingestions: InMemoryKnowledgeIngestionRepository
+):
+    receipt = handler.submit(_command())
+
+    ingestion = ingestions.get_by_id(receipt.ingestion_id)
+    assert receipt.status == IngestionStatus.QUEUED
+    assert (ingestion.item_id, ingestion.version_tag.value) == (receipt.item_id, "v1")
+    assert [(message.ingestion_id, message.lane) for message in ingestions.messages] == [
+        (receipt.ingestion_id, IngestionLane.TEXT)
+    ]
+
+
+def test_request_id_is_kept_on_the_ingestion_when_command_carries_one(
+    handler: SubmitKnowledgeItemHandler, ingestions: InMemoryKnowledgeIngestionRepository
+):
+    command = SubmitKnowledgeItem(
+        owner_node_id=OWNER,
+        source_file_name="report.pdf",
+        content=PDF_CONTENT,
+        scope=KnowledgeScope(confidentiality=ConfidentialityLevel.INTERNAL),
+        request_id="req-42",
+    )
+
+    receipt = handler.submit(command)
+
+    assert ingestions.get_by_id(receipt.ingestion_id).request_id == "req-42"
 
 
 def test_unknown_node_error_names_the_node_when_owner_is_not_registered(

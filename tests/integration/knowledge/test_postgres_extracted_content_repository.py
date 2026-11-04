@@ -1,7 +1,5 @@
-import sqlite3
-from pathlib import Path
-
 import pytest
+from tests.integration.knowledge.conftest import migrate
 
 from offline_rag.knowledge.application.errors import ExtractedContentNotFoundError
 from offline_rag.knowledge.domain.document_format import DocumentFormat
@@ -11,8 +9,9 @@ from offline_rag.knowledge.domain.extracted_content import (
     ExtractedContent,
 )
 from offline_rag.knowledge.domain.version_tag import VersionTag
-from offline_rag.knowledge.infrastructure.sqlite_extracted_content_repository import (
-    SqliteExtractedContentRepository,
+from offline_rag.knowledge.infrastructure.postgres_database import PostgresDatabase
+from offline_rag.knowledge.infrastructure.postgres_extracted_content_repository import (
+    PostgresExtractedContentRepository,
 )
 
 pytestmark = pytest.mark.integration
@@ -33,18 +32,18 @@ CONTENT = ExtractedContent(
 
 
 @pytest.fixture
-def repository(tmp_path: Path) -> SqliteExtractedContentRepository:
-    return SqliteExtractedContentRepository(tmp_path / "knowledge.sqlite3")
+def repository(database: PostgresDatabase) -> PostgresExtractedContentRepository:
+    return PostgresExtractedContentRepository(database)
 
 
-def test_content_reads_back_unchanged_when_saved(repository: SqliteExtractedContentRepository):
+def test_content_reads_back_unchanged_when_saved(repository: PostgresExtractedContentRepository):
     repository.save("ki-1", V1, CONTENT)
 
     assert repository.get("ki-1", V1) == CONTENT
 
 
 def test_old_blocks_are_replaced_when_version_is_saved_again(
-    repository: SqliteExtractedContentRepository,
+    repository: PostgresExtractedContentRepository,
 ):
     repository.save("ki-1", V1, CONTENT)
     newer = ExtractedContent(
@@ -58,7 +57,9 @@ def test_old_blocks_are_replaced_when_version_is_saved_again(
     assert repository.get("ki-1", V1) == newer
 
 
-def test_versions_are_kept_apart_when_both_are_saved(repository: SqliteExtractedContentRepository):
+def test_versions_are_kept_apart_when_both_are_saved(
+    repository: PostgresExtractedContentRepository,
+):
     repository.save("ki-1", V1, CONTENT)
     empty_docx = ExtractedContent(document_format=DocumentFormat.DOCX, page_count=None, blocks=())
 
@@ -69,7 +70,7 @@ def test_versions_are_kept_apart_when_both_are_saved(repository: SqliteExtracted
 
 
 def test_lookup_raises_not_found_when_nothing_was_extracted(
-    repository: SqliteExtractedContentRepository,
+    repository: PostgresExtractedContentRepository,
 ):
     with pytest.raises(ExtractedContentNotFoundError) as caught:
         repository.get("ki-1", V1)
@@ -77,7 +78,7 @@ def test_lookup_raises_not_found_when_nothing_was_extracted(
     assert caught.value.details == {"item_id": "ki-1", "version_tag": "v1"}
 
 
-def test_review_flag_reads_back_when_saved(repository: SqliteExtractedContentRepository):
+def test_review_flag_reads_back_when_saved(repository: PostgresExtractedContentRepository):
     flagged = ExtractedContent(
         document_format=DocumentFormat.PDF,
         page_count=1,
@@ -97,27 +98,13 @@ def test_review_flag_reads_back_when_saved(repository: SqliteExtractedContentRep
     assert repository.get("ki-1", V1) == flagged
 
 
-def test_old_database_gets_the_review_columns_when_opened(tmp_path: Path):
-    database_path = tmp_path / "knowledge.sqlite3"
-    with sqlite3.connect(database_path) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE extracted_contents (
-                item_id TEXT NOT NULL, version_tag TEXT NOT NULL, document_format TEXT NOT NULL,
-                page_count INTEGER, PRIMARY KEY (item_id, version_tag));
-            CREATE TABLE content_blocks (
-                item_id TEXT NOT NULL, version_tag TEXT NOT NULL, block_order INTEGER NOT NULL,
-                kind TEXT NOT NULL, text TEXT NOT NULL, page_number INTEGER,
-                heading_path_json TEXT NOT NULL, table_rows_json TEXT NOT NULL,
-                source TEXT NOT NULL, PRIMARY KEY (item_id, version_tag, block_order));
-            INSERT INTO extracted_contents VALUES ('ki-0', 'v1', 'docx', NULL);
-            INSERT INTO content_blocks VALUES
-                ('ki-0', 'v1', 0, 'text', 'Old row.', NULL, '[]', '[]', 'text_layer');
-            """
-        )
+def test_content_is_stored_again_when_schema_is_rebuilt_by_migrations(
+    postgres_url: str, database: PostgresDatabase
+):
+    migrate(postgres_url, "base", downgrade=True)
+    migrate(postgres_url)
+    repository = PostgresExtractedContentRepository(database)
 
-    repository = SqliteExtractedContentRepository(database_path)
-
-    assert repository.get("ki-0", V1).blocks[0].needs_human_review is False
     repository.save("ki-1", V1, CONTENT)
+
     assert repository.get("ki-1", V1) == CONTENT

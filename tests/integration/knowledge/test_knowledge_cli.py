@@ -1,11 +1,14 @@
 import json
-import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 import structlog
 
+from offline_rag.knowledge.infrastructure.postgres_database import PostgresDatabase
+from offline_rag.knowledge.infrastructure.postgres_knowledge_item_repository import (
+    PostgresKnowledgeItemRepository,
+)
 from offline_rag.knowledge.interface.cli import EXIT_FAILED, EXIT_OK, main
 from offline_rag.settings import Settings
 
@@ -23,9 +26,10 @@ def _reset_logging() -> Iterator[None]:
 
 
 @pytest.fixture
-def settings(tmp_path: Path) -> Settings:
+def settings(tmp_path: Path, postgres_url: str) -> Settings:
     return Settings(
         data_dir=tmp_path / "data",
+        database_url=postgres_url,
         node_registry_path=ROOT / "fixtures" / "registry" / "nodes.csv",
         log_level="error",
         # Nothing listens on port 9, so the LVM step fails at once instead of
@@ -67,15 +71,11 @@ def test_fixture_file_is_registered_when_submitted(
 
     result = json.loads(capsys.readouterr().out)
     assert exit_code == EXIT_OK
-    with sqlite3.connect(settings.data_dir / "knowledge.sqlite3") as connection:
-        row = connection.execute(
-            "SELECT document_format, source_file_reference, metadata_json "
-            "FROM knowledge_versions WHERE item_id = ?",
-            (result["item_id"],),
-        ).fetchone()
-    assert row[0] == document_format
-    assert (settings.data_dir / "source_files" / row[1]).is_file()
-    assert json.loads(row[2])["tags"] == ["riser"]
+    with PostgresDatabase(settings.database_url, pool_size=1, connect_timeout_s=2) as database:
+        version = PostgresKnowledgeItemRepository(database).get_by_id(result["item_id"]).versions[0]
+    assert version.document_format.value == document_format
+    assert (settings.data_dir / "source_files" / version.source_file_reference).is_file()
+    assert version.metadata.tags == ("riser",)
 
 
 @pytest.mark.parametrize(
@@ -163,10 +163,11 @@ def test_scanned_page_is_reported_for_the_lvm_when_scanned_pdf_is_submitted(
 
 
 def test_registration_stands_without_extraction_when_doc_converter_is_missing(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, postgres_url: str, capsys: pytest.CaptureFixture[str]
 ):
     settings = Settings(
         data_dir=tmp_path / "data",
+        database_url=postgres_url,
         node_registry_path=ROOT / "fixtures" / "registry" / "nodes.csv",
         log_level="error",
         libreoffice_path="soffice-that-does-not-exist",
@@ -227,13 +228,15 @@ def test_extraction_runs_again_when_extract_is_called(
     extracted = _run(["extract", submitted["item_id"], "--version-tag", "v1"], settings, capsys)
 
     assert extracted["extraction"] == submitted["extraction"]
+    assert extracted["ingestion_id"] != submitted["ingestion_id"]
+    assert extracted["status"] == "completed"
 
 
 @pytest.mark.parametrize(
     ("arguments", "code"),
     [
         (["extract", "no-such-item"], "KNOWLEDGE_ITEM_NOT_FOUND"),
-        (["show-content", "no-such-item"], "KNOWLEDGE_EXTRACTED_CONTENT_NOT_FOUND"),
+        (["show-content", "no-such-item"], "KNOWLEDGE_ITEM_NOT_FOUND"),
     ],
 )
 def test_problem_details_are_printed_when_item_is_unknown(

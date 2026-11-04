@@ -1,7 +1,6 @@
-import sqlite3
 from datetime import UTC, datetime
-from pathlib import Path
 
+import psycopg
 import pytest
 
 from offline_rag.knowledge.application.errors import KnowledgeItemNotFoundError
@@ -11,8 +10,9 @@ from offline_rag.knowledge.domain.knowledge_scope import ConfidentialityLevel, K
 from offline_rag.knowledge.domain.knowledge_version import KnowledgeVersion
 from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.knowledge.infrastructure.errors import KnowledgeStorageError
-from offline_rag.knowledge.infrastructure.sqlite_knowledge_item_repository import (
-    SqliteKnowledgeItemRepository,
+from offline_rag.knowledge.infrastructure.postgres_database import PostgresDatabase
+from offline_rag.knowledge.infrastructure.postgres_knowledge_item_repository import (
+    PostgresKnowledgeItemRepository,
 )
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
@@ -63,12 +63,11 @@ def _item(item_id: str = "ki-1") -> KnowledgeItem:
 
 
 @pytest.fixture
-def database_path(tmp_path: Path) -> Path:
-    return tmp_path / "data" / "knowledge.sqlite3"
+def repository(database: PostgresDatabase) -> PostgresKnowledgeItemRepository:
+    return PostgresKnowledgeItemRepository(database)
 
 
-def test_item_reads_back_unchanged_when_stored(database_path: Path):
-    repository = SqliteKnowledgeItemRepository(database_path)
+def test_item_reads_back_unchanged_when_stored(repository: PostgresKnowledgeItemRepository):
     item = _item()
 
     repository.add(item)
@@ -80,23 +79,24 @@ def test_item_reads_back_unchanged_when_stored(database_path: Path):
     assert stored.active_version.version_tag == VersionTag("v2")
 
 
-def test_item_survives_a_new_connection_when_database_is_reopened(database_path: Path):
-    SqliteKnowledgeItemRepository(database_path).add(_item())
+def test_item_survives_a_new_pool_when_database_is_reopened(postgres_url: str):
+    with PostgresDatabase(postgres_url, pool_size=1, connect_timeout_s=2) as first:
+        PostgresKnowledgeItemRepository(first).add(_item())
 
-    reopened = SqliteKnowledgeItemRepository(database_path)
+    with PostgresDatabase(postgres_url, pool_size=1, connect_timeout_s=2) as reopened:
+        assert PostgresKnowledgeItemRepository(reopened).get_by_id("ki-1").versions == (
+            _item().versions
+        )
 
-    assert reopened.get_by_id("ki-1").versions == _item().versions
 
-
-def test_lookup_raises_not_found_when_item_is_missing(database_path: Path):
-    repository = SqliteKnowledgeItemRepository(database_path)
-
+def test_lookup_raises_not_found_when_item_is_missing(repository: PostgresKnowledgeItemRepository):
     with pytest.raises(KnowledgeItemNotFoundError):
         repository.get_by_id("ki-404")
 
 
-def test_add_fails_and_keeps_the_first_item_when_id_is_taken(database_path: Path):
-    repository = SqliteKnowledgeItemRepository(database_path)
+def test_add_fails_and_keeps_the_first_item_when_id_is_taken(
+    repository: PostgresKnowledgeItemRepository,
+):
     repository.add(_item())
 
     with pytest.raises(KnowledgeStorageError) as caught:
@@ -107,16 +107,13 @@ def test_add_fails_and_keeps_the_first_item_when_id_is_taken(database_path: Path
     assert len(repository.get_by_id("ki-1").versions) == 2
 
 
-def test_add_writes_nothing_when_a_version_row_fails(database_path: Path):
-    repository = SqliteKnowledgeItemRepository(database_path)
-    with sqlite3.connect(database_path) as connection:
+def test_add_writes_nothing_when_a_version_row_fails(
+    postgres_url: str, repository: PostgresKnowledgeItemRepository
+):
+    with psycopg.connect(postgres_url, autocommit=True) as connection:
         connection.execute(
-            "INSERT INTO knowledge_items VALUES ('other', 'platform_sp12', 'internal', NULL, 'v1')"
-        )
-        connection.execute(
-            "INSERT INTO knowledge_versions VALUES "
-            "('ki-1', 'v1', 1, 'a', 'b', 'pdf', 'h', '{}', '2026-01-01T00:00:00+00:00', "
-            "NULL, NULL, NULL)"
+            "ALTER TABLE knowledge_version ADD CONSTRAINT reject_second_version"
+            " CHECK (sequence_number < 2)"
         )
 
     with pytest.raises(KnowledgeStorageError):
@@ -126,11 +123,14 @@ def test_add_writes_nothing_when_a_version_row_fails(database_path: Path):
         repository.get_by_id("ki-1")
 
 
-def test_opening_fails_with_storage_error_when_folder_cannot_be_created(tmp_path: Path):
-    blocker = tmp_path / "data"
-    blocker.write_text("a file where the data folder should be")
+def test_lookup_fails_with_storage_error_when_server_is_unreachable():
+    # Nothing listens on port 9.
+    with PostgresDatabase(
+        "postgresql://user@127.0.0.1:9/none", pool_size=1, connect_timeout_s=1
+    ) as unreachable:
+        repository = PostgresKnowledgeItemRepository(unreachable)
 
-    with pytest.raises(KnowledgeStorageError) as caught:
-        SqliteKnowledgeItemRepository(blocker / "knowledge.sqlite3")
+        with pytest.raises(KnowledgeStorageError) as caught:
+            repository.get_by_id("ki-1")
 
-    assert caught.value.details == {"operation": "create_schema"}
+    assert caught.value.details == {"operation": "get_by_id"}

@@ -82,3 +82,23 @@ class InvalidExtractedContentError(UnexpectedError):
             f"Extracted content is invalid: {reason}",
             details={"reason": reason},
         )
+
+
+class InvalidIngestionTransitionError(UnexpectedError):
+    """A KnowledgeIngestion was asked to move to a status its current status does not allow.
+
+    Workers skip finished runs, so this means a bug or a message for the wrong step.
+    """
+
+    code = "KNOWLEDGE_INGESTION_INVALID_TRANSITION"
+
+    def __init__(self, ingestion_id: str, *, from_status: str, to_status: str) -> None:
+        """Create the error for the refused move."""
+        super().__init__(
+            f"Ingestion '{ingestion_id}' cannot move from '{from_status}' to '{to_status}'.",
+            details={
+                "ingestion_id": ingestion_id,
+                "from_status": from_status,
+                "to_status": to_status,
+            },
+        )

@@ -6,9 +6,12 @@ must also be listed in `.env.example`; a unit test checks that they match.
 
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import PositiveInt
+from pydantic import PositiveInt, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 class Settings(BaseSettings):
@@ -17,7 +20,11 @@ class Settings(BaseSettings):
     Relative paths are resolved from the directory the core is started in.
 
     Attributes:
-        data_dir: Folder for the local database and the submitted source files.
+        data_dir: Folder for the submitted source files.
+        database_url: The local Postgres server as a libpq URL. Only loopback hosts
+            are accepted (ADR 0005).
+        database_pool_size: The most database connections one process keeps open.
+        database_connect_timeout_s: How long to wait for a database connection, in seconds.
         node_registry_path: CSV file with the registered Nodes (spec §6.1).
         log_level: Lowest log level that is written.
         min_page_text_chars: A PDF page with fewer non-space characters than this
@@ -38,6 +45,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="forbid")
 
     data_dir: Path = Path("data")
+    database_url: str = "postgresql://petro_ops:petro_ops@127.0.0.1:5432/petro_ops"
+    database_pool_size: PositiveInt = 5
+    database_connect_timeout_s: PositiveInt = 5
     node_registry_path: Path = Path("fixtures/registry/nodes.csv")
     log_level: Literal["debug", "info", "warning", "error"] = "info"
     min_page_text_chars: PositiveInt = 20
@@ -49,3 +59,13 @@ class Settings(BaseSettings):
     lvm_max_attempts: PositiveInt = 2
     prompts_dir: Path = Path("prompts")
     model_manifest_path: Path = Path("models/manifest.yaml")
+
+    @field_validator("database_url")
+    @classmethod
+    def _require_loopback_host(cls, url: str) -> str:
+        # The core is offline: every socket must stay on this machine (ADR 0005).
+        host = urlsplit(url).hostname
+        if host not in LOOPBACK_HOSTS:
+            message = f"must point to a loopback host ({', '.join(sorted(LOOPBACK_HOSTS))})"
+            raise ValueError(message)
+        return url

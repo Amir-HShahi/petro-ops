@@ -9,9 +9,17 @@ import structlog
 from offline_rag.knowledge.application.extract_knowledge_content import (
     ExtractKnowledgeContentHandler,
 )
+from offline_rag.knowledge.application.fail_knowledge_ingestion import (
+    FailKnowledgeIngestionHandler,
+)
+from offline_rag.knowledge.application.knowledge_ingestion_queries import (
+    KnowledgeIngestionQueries,
+)
 from offline_rag.knowledge.application.read_pages_with_lvm import ReadPagesWithLvmHandler
+from offline_rag.knowledge.application.reingest_knowledge_item import (
+    ReingestKnowledgeItemHandler,
+)
 from offline_rag.knowledge.application.submit_knowledge_item import SubmitKnowledgeItemHandler
-from offline_rag.knowledge.domain.events import KnowledgeContentExtracted, KnowledgeItemSubmitted
 from offline_rag.knowledge.infrastructure.csv_node_directory import CsvNodeDirectory
 from offline_rag.knowledge.infrastructure.docx_parser import DocxParser
 from offline_rag.knowledge.infrastructure.in_process_event_publisher import (
@@ -26,29 +34,35 @@ from offline_rag.knowledge.infrastructure.ollama_lvm import OllamaLvm
 from offline_rag.knowledge.infrastructure.ollama_table_ocr import OllamaTableOcr
 from offline_rag.knowledge.infrastructure.pdfium_page_renderer import PdfiumPageRenderer
 from offline_rag.knowledge.infrastructure.pdfplumber_pdf_parser import PdfplumberPdfParser
-from offline_rag.knowledge.infrastructure.sqlite_extracted_content_repository import (
-    SqliteExtractedContentRepository,
+from offline_rag.knowledge.infrastructure.postgres_database import PostgresDatabase
+from offline_rag.knowledge.infrastructure.postgres_extracted_content_repository import (
+    PostgresExtractedContentRepository,
 )
-from offline_rag.knowledge.infrastructure.sqlite_knowledge_item_repository import (
-    SqliteKnowledgeItemRepository,
+from offline_rag.knowledge.infrastructure.postgres_knowledge_ingestion_repository import (
+    PostgresKnowledgeIngestionRepository,
+)
+from offline_rag.knowledge.infrastructure.postgres_knowledge_item_repository import (
+    PostgresKnowledgeItemRepository,
 )
 from offline_rag.knowledge.infrastructure.system_clock import SystemClock
 from offline_rag.knowledge.infrastructure.uuid_id_generator import UuidIdGenerator
 from offline_rag.settings import Settings
 
-DATABASE_FILE_NAME = "knowledge.sqlite3"
 SOURCE_FILES_DIR_NAME = "source_files"
 
 
 @dataclass(frozen=True, kw_only=True)
 class KnowledgeWiring:
-    """The Knowledge Management use cases, and the stores entry points read from."""
+    """The Knowledge Management use cases and queries, and the database they share."""
 
     submit_handler: SubmitKnowledgeItemHandler
     extract_handler: ExtractKnowledgeContentHandler
     read_pages_handler: ReadPagesWithLvmHandler
-    knowledge_item_repository: SqliteKnowledgeItemRepository
-    extracted_content_repository: SqliteExtractedContentRepository
+    reingest_handler: ReingestKnowledgeItemHandler
+    fail_handler: FailKnowledgeIngestionHandler
+    queries: KnowledgeIngestionQueries
+    ingestion_repository: PostgresKnowledgeIngestionRepository
+    database: PostgresDatabase
 
 
 def configure_logging(settings: Settings) -> None:
@@ -70,20 +84,26 @@ def configure_logging(settings: Settings) -> None:
 
 
 def build_knowledge(settings: Settings) -> KnowledgeWiring:
-    """Return Knowledge Management on SQLite, local files, local parsers and local models.
+    """Return Knowledge Management on Postgres, local files, local parsers and local models.
 
-    Every submitted item is extracted right after it is registered, and PDF pages
-    without a text layer are then read by the LVM.
+    Submitting queues a KnowledgeIngestion; the workers run its steps (ADR 0005).
     """
-    database_path = settings.data_dir / DATABASE_FILE_NAME
-    knowledge_item_repository = SqliteKnowledgeItemRepository(database_path)
-    extracted_content_repository = SqliteExtractedContentRepository(database_path)
+    database = PostgresDatabase(
+        settings.database_url,
+        pool_size=settings.database_pool_size,
+        connect_timeout_s=settings.database_connect_timeout_s,
+    )
+    knowledge_item_repository = PostgresKnowledgeItemRepository(database)
+    extracted_content_repository = PostgresExtractedContentRepository(database)
+    ingestion_repository = PostgresKnowledgeIngestionRepository(database)
     source_file_store = LocalSourceFileStore(settings.data_dir / SOURCE_FILES_DIR_NAME)
     clock = SystemClock()
+    id_generator = UuidIdGenerator()
     event_publisher = InProcessEventPublisher()
     docx_parser = DocxParser()
 
     extract_handler = ExtractKnowledgeContentHandler(
+        ingestion_repository=ingestion_repository,
         repository=knowledge_item_repository,
         source_file_store=source_file_store,
         parser=LocalDocumentParser(
@@ -97,10 +117,10 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
         ),
         extracted_content_repository=extracted_content_repository,
         clock=clock,
+        id_generator=id_generator,
         event_publisher=event_publisher,
         min_page_text_chars=settings.min_page_text_chars,
     )
-    event_publisher.subscribe(KnowledgeItemSubmitted, extract_handler.on_knowledge_item_submitted)
 
     model_client = OllamaClient(base_url=settings.ollama_url, timeout_s=settings.model_timeout_s)
     registries = {
@@ -108,6 +128,7 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
         "model_manifest_path": settings.model_manifest_path,
     }
     read_pages_handler = ReadPagesWithLvmHandler(
+        ingestion_repository=ingestion_repository,
         repository=knowledge_item_repository,
         source_file_store=source_file_store,
         extracted_content_repository=extracted_content_repository,
@@ -125,22 +146,33 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
         event_publisher=event_publisher,
         min_page_text_chars=settings.min_page_text_chars,
     )
-    event_publisher.subscribe(
-        KnowledgeContentExtracted, read_pages_handler.on_knowledge_content_extracted
-    )
 
     submit_handler = SubmitKnowledgeItemHandler(
-        repository=knowledge_item_repository,
+        ingestion_repository=ingestion_repository,
         node_directory=CsvNodeDirectory(settings.node_registry_path),
         source_file_store=source_file_store,
         clock=clock,
-        id_generator=UuidIdGenerator(),
+        id_generator=id_generator,
         event_publisher=event_publisher,
     )
     return KnowledgeWiring(
         submit_handler=submit_handler,
         extract_handler=extract_handler,
         read_pages_handler=read_pages_handler,
-        knowledge_item_repository=knowledge_item_repository,
-        extracted_content_repository=extracted_content_repository,
+        reingest_handler=ReingestKnowledgeItemHandler(
+            ingestion_repository=ingestion_repository,
+            repository=knowledge_item_repository,
+            clock=clock,
+            id_generator=id_generator,
+        ),
+        fail_handler=FailKnowledgeIngestionHandler(
+            ingestion_repository=ingestion_repository, clock=clock
+        ),
+        queries=KnowledgeIngestionQueries(
+            ingestion_repository=ingestion_repository,
+            repository=knowledge_item_repository,
+            extracted_content_repository=extracted_content_repository,
+        ),
+        ingestion_repository=ingestion_repository,
+        database=database,
     )

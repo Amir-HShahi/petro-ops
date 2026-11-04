@@ -3,10 +3,12 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import Protocol
 
 from offline_rag.knowledge.domain.document_format import DocumentFormat
 from offline_rag.knowledge.domain.extracted_content import ExtractedContent
+from offline_rag.knowledge.domain.knowledge_ingestion import KnowledgeIngestion
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
 from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.shared_kernel.domain_event import DomainEvent
@@ -26,6 +28,60 @@ class KnowledgeItemRepository(Protocol):
 
     def add(self, item: KnowledgeItem) -> None:
         """Store a new item."""
+        ...
+
+
+class IngestionLane(StrEnum):
+    """The worker queue a message goes to, used as its routing key (ADR 0005)."""
+
+    TEXT = "text"
+    VISION = "vision"
+
+
+@dataclass(frozen=True, kw_only=True)
+class OutboxMessage:
+    """A message stored with the data it announces, published later by the relay (ADR 0005).
+
+    Attributes:
+        outbox_id: Unique id, also used by consumers to spot a message seen before.
+        ingestion_id: The run the message is for; it is the whole payload.
+        lane: Which workers receive it.
+        created_at: When it was written.
+    """
+
+    outbox_id: str
+    ingestion_id: str
+    lane: IngestionLane
+    created_at: datetime
+
+
+class KnowledgeIngestionRepository(Protocol):
+    """Stores KnowledgeIngestions, writing each with its outbox message in one transaction."""
+
+    def add_with_item(
+        self, item: KnowledgeItem, ingestion: KnowledgeIngestion, message: OutboxMessage
+    ) -> None:
+        """Store a new KnowledgeItem, its first ingestion and the message that starts it."""
+        ...
+
+    def add(self, ingestion: KnowledgeIngestion, message: OutboxMessage) -> None:
+        """Store a new ingestion of an existing version and the message that starts it."""
+        ...
+
+    def save(self, ingestion: KnowledgeIngestion, message: OutboxMessage | None = None) -> None:
+        """Store the new state of an ingestion, and the message for its next step if any."""
+        ...
+
+    def get_by_id(self, ingestion_id: str) -> KnowledgeIngestion:
+        """Return the ingestion with this id.
+
+        Raises:
+            KnowledgeIngestionNotFoundError: No ingestion has this id.
+        """
+        ...
+
+    def find_running(self, item_id: str, version_tag: VersionTag) -> KnowledgeIngestion | None:
+        """Return the ingestion of this version that has not ended, if there is one."""
         ...
 
 

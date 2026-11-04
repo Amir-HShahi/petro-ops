@@ -78,4 +78,7 @@ Add a row in the same PR that adds the code.
 | `KNOWLEDGE_MODEL_OUTPUT_INVALID` | Infrastructure | A local model kept answering in a shape its output schema does not allow. | Try again. If it keeps failing, report it with the `request_id`. |
 | `KNOWLEDGE_MODEL_URL_NOT_LOCAL` | Infrastructure | `OLLAMA_URL` points off this machine, which the offline rule forbids. | Set `OLLAMA_URL` to a loopback address such as `http://127.0.0.1:11434`. |
 | `KNOWLEDGE_MODEL_REGISTRY_UNAVAILABLE` | Infrastructure | The prompt or model of a task cannot be loaded from `prompts/registry.yaml` or `models/manifest.yaml`. | Check both files, and that the core runs from the repository root or `PROMPTS_DIR` and `MODEL_MANIFEST_PATH` are set. |
+| `KNOWLEDGE_INGESTION_NOT_FOUND` | Not found | No ingestion has the requested id. | Check the id returned when the file was submitted. |
+| `KNOWLEDGE_INGESTION_ALREADY_RUNNING` | Domain | A version was sent for ingestion again while an earlier run has not ended. | Wait until the earlier run is `completed` or `failed`, then try again. |
+| `KNOWLEDGE_INGESTION_INVALID_TRANSITION` | Unexpected | An ingestion was asked to move to a status its current status does not allow. This is a bug. | Report it with the `request_id`. |
 | `UNEXPECTED_ERROR` | Unexpected | A failure that is not a project error reached the edge. This is a bug. | Report it with the `request_id`. |
