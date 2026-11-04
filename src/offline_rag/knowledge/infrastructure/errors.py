@@ -23,6 +23,24 @@ class KnowledgeStorageError(InfrastructureError):
         )
 
 
+class MessageBrokerUnavailableError(InfrastructureError):
+    """The local message broker could not be reached or did not confirm a message (ADR 0005)."""
+
+    code = "KNOWLEDGE_MESSAGE_BROKER_UNAVAILABLE"
+
+    def __init__(self, operation: str) -> None:
+        """Create the error.
+
+        Args:
+            operation: What was being done, such as `publish`.
+        """
+        super().__init__(
+            "The local message broker is not available. Check that RabbitMQ is running, "
+            "then try again.",
+            details={"operation": operation},
+        )
+
+
 class SourceFileStorageError(InfrastructureError):
     """A file could not be written to or read from the local file store."""
 

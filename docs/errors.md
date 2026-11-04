@@ -80,5 +80,7 @@ Add a row in the same PR that adds the code.
 | `KNOWLEDGE_MODEL_REGISTRY_UNAVAILABLE` | Infrastructure | The prompt or model of a task cannot be loaded from `prompts/registry.yaml` or `models/manifest.yaml`. | Check both files, and that the core runs from the repository root or `PROMPTS_DIR` and `MODEL_MANIFEST_PATH` are set. |
 | `KNOWLEDGE_INGESTION_NOT_FOUND` | Not found | No ingestion has the requested id. | Check the id returned when the file was submitted. |
 | `KNOWLEDGE_INGESTION_ALREADY_RUNNING` | Domain | A version was sent for ingestion again while an earlier run has not ended. | Wait until the earlier run is `completed` or `failed`, then try again. |
+| `KNOWLEDGE_INGESTION_STATUS_CHANGED` | Domain | Two workers tried to start the same ingestion step at once; the second one stopped and changed nothing. Workers handle it themselves. | Nothing; the first worker carries on. |
 | `KNOWLEDGE_INGESTION_INVALID_TRANSITION` | Unexpected | An ingestion was asked to move to a status its current status does not allow. This is a bug. | Report it with the `request_id`. |
+| `KNOWLEDGE_MESSAGE_BROKER_UNAVAILABLE` | Infrastructure | The local RabbitMQ broker cannot be reached or did not confirm a message. The message stays in the outbox and is sent later. | Start RabbitMQ and check `RABBITMQ_URL`. |
 | `UNEXPECTED_ERROR` | Unexpected | A failure that is not a project error reached the edge. This is a bug. | Report it with the `request_id`. |

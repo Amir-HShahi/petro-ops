@@ -37,3 +37,17 @@ def test_database_url_is_accepted_when_host_is_loopback(host: str):
 def test_database_url_is_rejected_when_host_is_not_loopback(url: str):
     with pytest.raises(ValidationError, match="loopback"):
         Settings(database_url=url)
+
+
+def test_rabbitmq_url_is_accepted_when_host_is_loopback():
+    url = "amqp://user:secret@127.0.0.1:5672/%2F"
+
+    assert Settings(rabbitmq_url=url).rabbitmq_url == url
+
+
+@pytest.mark.parametrize(
+    "url", ["amqp://user@broker.example.com/%2F", "amqp://10.0.0.5:5672/%2F", "amqp:///%2F"]
+)
+def test_rabbitmq_url_is_rejected_when_host_is_not_loopback(url: str):
+    with pytest.raises(ValidationError, match="loopback"):
+        Settings(rabbitmq_url=url)

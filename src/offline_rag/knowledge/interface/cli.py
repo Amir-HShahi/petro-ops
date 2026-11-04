@@ -128,7 +128,7 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
         return EXIT_FAILED
     finally:
         if knowledge is not None:
-            knowledge.database.close()
+            knowledge.close()
         structlog.contextvars.unbind_contextvars("request_id")
 
     _write_json(sys.stdout, result)

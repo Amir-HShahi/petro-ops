@@ -57,6 +57,20 @@ class KnowledgeIngestionNotFoundError(NotFoundError):
         )
 
 
+class IngestionStatusChangedError(DomainError):
+    """Another worker moved a KnowledgeIngestion on between reading it and saving it."""
+
+    code = "KNOWLEDGE_INGESTION_STATUS_CHANGED"
+
+    def __init__(self, ingestion_id: str, *, expected_status: str) -> None:
+        """Create the error for the ingestion and the status it no longer has."""
+        super().__init__(
+            f"Ingestion '{ingestion_id}' was started by another worker at the same time. "
+            "Nothing was changed.",
+            details={"ingestion_id": ingestion_id, "expected_status": expected_status},
+        )
+
+
 class IngestionAlreadyRunningError(DomainError):
     """A version was sent for ingestion again while an earlier run has not ended."""
 

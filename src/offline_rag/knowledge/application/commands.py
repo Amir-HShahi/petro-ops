@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 
+from offline_rag.knowledge.application.ports import IngestionLane
 from offline_rag.knowledge.domain.knowledge_scope import KnowledgeScope
 from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
@@ -34,9 +35,13 @@ class ExtractKnowledgeContent:
 
     Attributes:
         ingestion_id: The KnowledgeIngestion. Running it again replaces the old result.
+        is_redelivery: Whether the message comes again after a worker stopped or a
+            step failed. Only then may a run that is already EXTRACTING start over;
+            otherwise another worker is still on it.
     """
 
     ingestion_id: str
+    is_redelivery: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -65,6 +70,46 @@ class ReingestKnowledgeItem:
     item_id: str
     version_tag: VersionTag | None = None
     request_id: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunIngestionStep:
+    """Run the step a worker message asks for, and decide what happens to the message.
+
+    Attributes:
+        ingestion_id: The KnowledgeIngestion the message is for.
+        lane: The queue the message came from, which names the step.
+        attempt: How many times this step has been tried, counting this one.
+        is_redelivery: Whether the broker delivered the message again because the
+            worker that had it stopped before acking.
+    """
+
+    ingestion_id: str
+    lane: IngestionLane
+    attempt: int = 1
+    is_redelivery: bool = False
+
+
+@dataclass(frozen=True, kw_only=True)
+class PublishOutboxMessages:
+    """Publish the outbox messages the broker does not have yet, oldest first (ADR 0005).
+
+    Attributes:
+        max_messages: The most messages one pass publishes.
+    """
+
+    max_messages: int = 100
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReconcileKnowledgeIngestions:
+    """Send a new message for ingestions that stopped because their message was lost (ADR 0005).
+
+    Attributes:
+        max_ingestions: The most ingestions one pass sends a message for.
+    """
+
+    max_ingestions: int = 100
 
 
 @dataclass(frozen=True, kw_only=True)

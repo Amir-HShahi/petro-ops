@@ -25,6 +25,14 @@ class Settings(BaseSettings):
             are accepted (ADR 0005).
         database_pool_size: The most database connections one process keeps open.
         database_connect_timeout_s: How long to wait for a database connection, in seconds.
+        reconcile_after_s: How long a queued ingestion may wait after its last message,
+            in seconds, before the reconciler sends a new one (ADR 0005).
+        rabbitmq_url: The local RabbitMQ broker as an AMQP URL. Only loopback hosts
+            are accepted (ADR 0005).
+        worker_prefetch_count: How many unacked messages one worker holds at once.
+        worker_max_attempts: How many times a worker step is tried before its
+            ingestion fails and the message goes to the dead-letter queue.
+        worker_retry_delay_s: How long a failed step waits in the retry queue, in seconds.
         node_registry_path: CSV file with the registered Nodes (spec §6.1).
         log_level: Lowest log level that is written.
         min_page_text_chars: A PDF page with fewer non-space characters than this
@@ -48,6 +56,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://petro_ops:petro_ops@127.0.0.1:5432/petro_ops"
     database_pool_size: PositiveInt = 5
     database_connect_timeout_s: PositiveInt = 5
+    reconcile_after_s: PositiveInt = 1800
+    rabbitmq_url: str = "amqp://petro_ops:petro_ops@127.0.0.1:5672/%2F"
+    worker_prefetch_count: PositiveInt = 1
+    worker_max_attempts: PositiveInt = 3
+    worker_retry_delay_s: PositiveInt = 30
     node_registry_path: Path = Path("fixtures/registry/nodes.csv")
     log_level: Literal["debug", "info", "warning", "error"] = "info"
     min_page_text_chars: PositiveInt = 20
@@ -60,7 +73,7 @@ class Settings(BaseSettings):
     prompts_dir: Path = Path("prompts")
     model_manifest_path: Path = Path("models/manifest.yaml")
 
-    @field_validator("database_url")
+    @field_validator("database_url", "rabbitmq_url")
     @classmethod
     def _require_loopback_host(cls, url: str) -> str:
         # The core is offline: every socket must stay on this machine (ADR 0005).

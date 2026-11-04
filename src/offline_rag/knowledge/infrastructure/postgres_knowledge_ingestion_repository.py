@@ -1,10 +1,14 @@
 """KnowledgeIngestions and their outbox messages in the local Postgres database (ADR 0005)."""
 
+from datetime import datetime
+
 import psycopg
 from psycopg.rows import DictRow
-from psycopg.types.json import Jsonb
 
-from offline_rag.knowledge.application.errors import KnowledgeIngestionNotFoundError
+from offline_rag.knowledge.application.errors import (
+    IngestionStatusChangedError,
+    KnowledgeIngestionNotFoundError,
+)
 from offline_rag.knowledge.application.ports import OutboxMessage
 from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus, KnowledgeIngestion
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
@@ -13,6 +17,7 @@ from offline_rag.knowledge.infrastructure.postgres_database import PostgresDatab
 from offline_rag.knowledge.infrastructure.postgres_knowledge_item_repository import (
     insert_knowledge_item,
 )
+from offline_rag.knowledge.infrastructure.postgres_outbox import insert_outbox_message
 
 _UPSERT_INGESTION = """
 INSERT INTO knowledge_ingestion
@@ -28,9 +33,17 @@ ON CONFLICT (ingestion_id) DO UPDATE SET
     updated_at = EXCLUDED.updated_at
 """
 
-_INSERT_MESSAGE = """
-INSERT INTO outbox_message (outbox_id, ingestion_id, routing_key, payload, created_at)
-VALUES (%s, %s, %s, %s, %s)
+_SELECT_STALLED = """
+SELECT * FROM knowledge_ingestion AS ingestion
+WHERE ingestion.status IN ('queued', 'reading_pages')
+    AND ingestion.updated_at < %(stalled_since)s
+    AND NOT EXISTS (
+        SELECT 1 FROM outbox_message AS message
+        WHERE message.ingestion_id = ingestion.ingestion_id
+            AND (message.published_at IS NULL OR message.created_at >= %(stalled_since)s)
+    )
+ORDER BY ingestion.updated_at, ingestion.ingestion_id
+LIMIT %(limit)s
 """
 
 
@@ -62,13 +75,30 @@ class PostgresKnowledgeIngestionRepository:
         with self._database.transaction("add_ingestion") as connection:
             _write(connection, ingestion, message)
 
-    def save(self, ingestion: KnowledgeIngestion, message: OutboxMessage | None = None) -> None:
+    def save(
+        self,
+        ingestion: KnowledgeIngestion,
+        message: OutboxMessage | None = None,
+        *,
+        expected_status: IngestionStatus | None = None,
+    ) -> None:
         """Store the ingestion's new state, and the message if any, in one transaction.
 
         Raises:
+            IngestionStatusChangedError: The stored status is not `expected_status`.
             KnowledgeStorageError: The database cannot be written.
         """
         with self._database.transaction("save_ingestion") as connection:
+            if expected_status is not None:
+                # The row lock makes a second worker wait here, then see the new status.
+                row = connection.execute(
+                    "SELECT status FROM knowledge_ingestion WHERE ingestion_id = %s FOR UPDATE",
+                    (ingestion.ingestion_id,),
+                ).fetchone()
+                if row is None or row["status"] != expected_status.value:
+                    raise IngestionStatusChangedError(
+                        ingestion.ingestion_id, expected_status=expected_status.value
+                    )
             _write(connection, ingestion, message)
 
     def get_by_id(self, ingestion_id: str) -> KnowledgeIngestion:
@@ -100,6 +130,18 @@ class PostgresKnowledgeIngestionRepository:
             ).fetchone()
         return _ingestion_from_row(row) if row else None
 
+    def find_stalled(self, stalled_since: datetime, limit: int) -> list[KnowledgeIngestion]:
+        """Return QUEUED or READING_PAGES ingestions with no news since `stalled_since`.
+
+        Raises:
+            KnowledgeStorageError: The database cannot be read.
+        """
+        with self._database.transaction("find_stalled_ingestions") as connection:
+            rows = connection.execute(
+                _SELECT_STALLED, {"stalled_since": stalled_since, "limit": limit}
+            ).fetchall()
+        return [_ingestion_from_row(row) for row in rows]
+
 
 def _write(
     connection: psycopg.Connection[DictRow],
@@ -123,16 +165,7 @@ def _write(
         ),
     )
     if message is not None:
-        connection.execute(
-            _INSERT_MESSAGE,
-            (
-                message.outbox_id,
-                message.ingestion_id,
-                message.lane.value,
-                Jsonb({"ingestion_id": message.ingestion_id, "outbox_id": message.outbox_id}),
-                message.created_at,
-            ),
-        )
+        insert_outbox_message(connection, message)
 
 
 def _ingestion_from_row(row: DictRow) -> KnowledgeIngestion:

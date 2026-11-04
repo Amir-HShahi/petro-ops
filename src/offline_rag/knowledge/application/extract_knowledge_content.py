@@ -6,6 +6,7 @@ The text worker runs it for every queued KnowledgeIngestion (ADR 0005).
 import structlog
 
 from offline_rag.knowledge.application.commands import ExtractKnowledgeContent
+from offline_rag.knowledge.application.errors import IngestionStatusChangedError
 from offline_rag.knowledge.application.ingestion_queueing import next_step_message
 from offline_rag.knowledge.application.ports import (
     Clock,
@@ -78,9 +79,10 @@ class ExtractKnowledgeContentHandler:
     def extract(self, command: ExtractKnowledgeContent) -> KnowledgeIngestion:
         """Extract the version of an ingestion and return the ingestion in its new state.
 
-        A message seen again after this step has committed changes nothing. An
-        error that a retry cannot fix, such as a damaged file, ends the ingestion
-        as FAILED instead of being raised.
+        A message seen again after this step has committed changes nothing, and
+        when two workers get the same run only the first one extracts. An error
+        that a retry cannot fix, such as a damaged file, ends the ingestion as
+        FAILED instead of being raised.
 
         Raises:
             KnowledgeIngestionNotFoundError: The ingestion does not exist.
@@ -88,16 +90,24 @@ class ExtractKnowledgeContentHandler:
                 failed; the step can be retried.
         """
         ingestion = self._ingestion_repository.get_by_id(command.ingestion_id)
-        if ingestion.status not in {IngestionStatus.QUEUED, IngestionStatus.EXTRACTING}:
+        status_before = ingestion.status
+        can_start = status_before == IngestionStatus.QUEUED or (
+            status_before == IngestionStatus.EXTRACTING and command.is_redelivery
+        )
+        if not can_start:
             log.info(
                 "knowledge_extraction_skipped",
                 ingestion_id=ingestion.ingestion_id,
-                status=ingestion.status.value,
+                status=status_before.value,
             )
             return ingestion
 
         ingestion.start_extraction(self._clock.now())
-        self._ingestion_repository.save(ingestion)
+        try:
+            self._ingestion_repository.save(ingestion, expected_status=status_before)
+        except IngestionStatusChangedError:
+            log.info("knowledge_extraction_taken", ingestion_id=ingestion.ingestion_id)
+            return self._ingestion_repository.get_by_id(ingestion.ingestion_id)
         try:
             content = self._extract_content(ingestion)
         except InfrastructureError:

@@ -15,10 +15,18 @@ from offline_rag.knowledge.application.fail_knowledge_ingestion import (
 from offline_rag.knowledge.application.knowledge_ingestion_queries import (
     KnowledgeIngestionQueries,
 )
+from offline_rag.knowledge.application.ports import IngestionLane
+from offline_rag.knowledge.application.publish_outbox_messages import (
+    PublishOutboxMessagesHandler,
+)
 from offline_rag.knowledge.application.read_pages_with_lvm import ReadPagesWithLvmHandler
+from offline_rag.knowledge.application.reconcile_knowledge_ingestions import (
+    ReconcileKnowledgeIngestionsHandler,
+)
 from offline_rag.knowledge.application.reingest_knowledge_item import (
     ReingestKnowledgeItemHandler,
 )
+from offline_rag.knowledge.application.run_ingestion_step import RunIngestionStepHandler
 from offline_rag.knowledge.application.submit_knowledge_item import SubmitKnowledgeItemHandler
 from offline_rag.knowledge.infrastructure.csv_node_directory import CsvNodeDirectory
 from offline_rag.knowledge.infrastructure.docx_parser import DocxParser
@@ -44,6 +52,13 @@ from offline_rag.knowledge.infrastructure.postgres_knowledge_ingestion_repositor
 from offline_rag.knowledge.infrastructure.postgres_knowledge_item_repository import (
     PostgresKnowledgeItemRepository,
 )
+from offline_rag.knowledge.infrastructure.postgres_outbox import PostgresOutbox
+from offline_rag.knowledge.infrastructure.rabbitmq_ingestion_consumer import (
+    RabbitMqIngestionConsumer,
+)
+from offline_rag.knowledge.infrastructure.rabbitmq_ingestion_message_publisher import (
+    RabbitMqIngestionMessagePublisher,
+)
 from offline_rag.knowledge.infrastructure.system_clock import SystemClock
 from offline_rag.knowledge.infrastructure.uuid_id_generator import UuidIdGenerator
 from offline_rag.settings import Settings
@@ -53,16 +68,25 @@ SOURCE_FILES_DIR_NAME = "source_files"
 
 @dataclass(frozen=True, kw_only=True)
 class KnowledgeWiring:
-    """The Knowledge Management use cases and queries, and the database they share."""
+    """The Knowledge Management use cases and queries, and the connections they share."""
 
     submit_handler: SubmitKnowledgeItemHandler
     extract_handler: ExtractKnowledgeContentHandler
     read_pages_handler: ReadPagesWithLvmHandler
     reingest_handler: ReingestKnowledgeItemHandler
     fail_handler: FailKnowledgeIngestionHandler
+    reconcile_handler: ReconcileKnowledgeIngestionsHandler
+    publish_handler: PublishOutboxMessagesHandler
+    run_step_handler: RunIngestionStepHandler
     queries: KnowledgeIngestionQueries
     ingestion_repository: PostgresKnowledgeIngestionRepository
     database: PostgresDatabase
+    message_publisher: RabbitMqIngestionMessagePublisher
+
+    def close(self) -> None:
+        """Close the database pool and the broker connection."""
+        self.message_publisher.close()
+        self.database.close()
 
 
 def configure_logging(settings: Settings) -> None:
@@ -155,6 +179,12 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
         id_generator=id_generator,
         event_publisher=event_publisher,
     )
+    fail_handler = FailKnowledgeIngestionHandler(
+        ingestion_repository=ingestion_repository, clock=clock
+    )
+    outbox = PostgresOutbox(database)
+    # Connects on the first publish, so commands that publish nothing need no broker.
+    message_publisher = RabbitMqIngestionMessagePublisher(settings.rabbitmq_url)
     return KnowledgeWiring(
         submit_handler=submit_handler,
         extract_handler=extract_handler,
@@ -165,8 +195,22 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
             clock=clock,
             id_generator=id_generator,
         ),
-        fail_handler=FailKnowledgeIngestionHandler(
-            ingestion_repository=ingestion_repository, clock=clock
+        fail_handler=fail_handler,
+        reconcile_handler=ReconcileKnowledgeIngestionsHandler(
+            ingestion_repository=ingestion_repository,
+            outbox=outbox,
+            clock=clock,
+            id_generator=id_generator,
+            reconcile_after_s=settings.reconcile_after_s,
+        ),
+        publish_handler=PublishOutboxMessagesHandler(
+            outbox=outbox, publisher=message_publisher, clock=clock
+        ),
+        run_step_handler=RunIngestionStepHandler(
+            extract_handler=extract_handler,
+            read_pages_handler=read_pages_handler,
+            fail_handler=fail_handler,
+            max_attempts=settings.worker_max_attempts,
         ),
         queries=KnowledgeIngestionQueries(
             ingestion_repository=ingestion_repository,
@@ -175,4 +219,15 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
         ),
         ingestion_repository=ingestion_repository,
         database=database,
+        message_publisher=message_publisher,
+    )
+
+
+def build_ingestion_consumer(settings: Settings, lane: IngestionLane) -> RabbitMqIngestionConsumer:
+    """Return the broker consumer for the workers of one lane (ADR 0005)."""
+    return RabbitMqIngestionConsumer(
+        settings.rabbitmq_url,
+        lane=lane,
+        prefetch_count=settings.worker_prefetch_count,
+        retry_delay_s=settings.worker_retry_delay_s,
     )

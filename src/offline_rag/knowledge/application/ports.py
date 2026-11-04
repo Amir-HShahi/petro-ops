@@ -8,7 +8,7 @@ from typing import Protocol
 
 from offline_rag.knowledge.domain.document_format import DocumentFormat
 from offline_rag.knowledge.domain.extracted_content import ExtractedContent
-from offline_rag.knowledge.domain.knowledge_ingestion import KnowledgeIngestion
+from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus, KnowledgeIngestion
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
 from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.shared_kernel.domain_event import DomainEvent
@@ -68,8 +68,24 @@ class KnowledgeIngestionRepository(Protocol):
         """Store a new ingestion of an existing version and the message that starts it."""
         ...
 
-    def save(self, ingestion: KnowledgeIngestion, message: OutboxMessage | None = None) -> None:
-        """Store the new state of an ingestion, and the message for its next step if any."""
+    def save(
+        self,
+        ingestion: KnowledgeIngestion,
+        message: OutboxMessage | None = None,
+        *,
+        expected_status: IngestionStatus | None = None,
+    ) -> None:
+        """Store the new state of an ingestion, and the message for its next step if any.
+
+        Args:
+            ingestion: The ingestion in its new state.
+            message: The message that hands it to the next workers, if any.
+            expected_status: When given, store nothing unless the stored ingestion
+                still has this status, so two workers cannot both start one step.
+
+        Raises:
+            IngestionStatusChangedError: The stored status is not `expected_status`.
+        """
         ...
 
     def get_by_id(self, ingestion_id: str) -> KnowledgeIngestion:
@@ -82,6 +98,48 @@ class KnowledgeIngestionRepository(Protocol):
 
     def find_running(self, item_id: str, version_tag: VersionTag) -> KnowledgeIngestion | None:
         """Return the ingestion of this version that has not ended, if there is one."""
+        ...
+
+    def find_stalled(self, stalled_since: datetime, limit: int) -> list[KnowledgeIngestion]:
+        """Return ingestions waiting for a worker whose message may have been lost.
+
+        An ingestion counts when it is QUEUED or READING_PAGES, has not changed
+        since `stalled_since`, and all its messages were published before then.
+        EXTRACTING runs are left out: the broker redelivers their unacked message.
+
+        Args:
+            stalled_since: The time before which nothing may have happened.
+            limit: The most ingestions to return, least recently changed first.
+        """
+        ...
+
+
+class Outbox(Protocol):
+    """Reads and writes the messages waiting to be published to the broker (ADR 0005)."""
+
+    def find_unpublished(self, limit: int) -> list[OutboxMessage]:
+        """Return up to `limit` messages not yet published, oldest first."""
+        ...
+
+    def mark_published(self, outbox_id: str, published_at: datetime) -> None:
+        """Record that the broker has stored the message."""
+        ...
+
+    def add(self, message: OutboxMessage) -> None:
+        """Store a message for an ingestion without changing the ingestion."""
+        ...
+
+
+class IngestionMessagePublisher(Protocol):
+    """Hands ingestion messages to the broker, routed by their lane (ADR 0005)."""
+
+    def publish(self, message: OutboxMessage) -> None:
+        """Publish the message and return once the broker has stored it.
+
+        Raises:
+            MessageBrokerUnavailableError: The broker cannot be reached or did
+                not confirm the message.
+        """
         ...
 
 

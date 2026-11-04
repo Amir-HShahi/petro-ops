@@ -288,10 +288,41 @@ def test_extraction_starts_again_when_a_worker_stopped_mid_step(
     stopped.start_extraction(NOW)
     ingestions.save(stopped)
 
-    result = handler.extract(_command(ingestion_id))
+    result = handler.extract(ExtractKnowledgeContent(ingestion_id=ingestion_id, is_redelivery=True))
 
     assert result.status == IngestionStatus.READING_PAGES
     assert result.attempts == 2
+
+
+def test_extraction_is_left_to_the_other_worker_when_a_fresh_message_finds_it_running(
+    handler: ExtractKnowledgeContentHandler,
+    parser: FakeDocumentParser,
+    ingestions: InMemoryKnowledgeIngestionRepository,
+    ingestion_id: str,
+):
+    running = ingestions.get_by_id(ingestion_id)
+    running.start_extraction(NOW)
+    ingestions.save(running)
+
+    result = handler.extract(_command(ingestion_id))
+
+    assert (result.status, result.attempts) == (IngestionStatus.EXTRACTING, 1)
+    assert parser.calls == []
+
+
+def test_only_the_first_worker_extracts_when_two_start_the_same_run(
+    handler: ExtractKnowledgeContentHandler,
+    parser: FakeDocumentParser,
+    ingestions: InMemoryKnowledgeIngestionRepository,
+    ingestion_id: str,
+):
+    ingestions.taken_by_another_worker.add(ingestion_id)
+
+    result = handler.extract(_command(ingestion_id))
+
+    assert result.status == IngestionStatus.QUEUED
+    assert parser.calls == []
+    assert ingestions.messages == []
 
 
 def test_lookup_raises_not_found_when_ingestion_does_not_exist(
