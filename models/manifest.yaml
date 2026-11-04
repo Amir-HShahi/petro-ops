@@ -72,4 +72,12 @@ models:
     status: chosen
 
   - role: reranker
-    status: deferred
+    name: bge-reranker-v2-m3
+    tag: latest
+    runtime: ollama
+    source: ollama pull qllama/bge-reranker-v2-m3:latest
+    digest: 06e0e64a6f61
+    quantization: Q8_0
+    context_tokens: 8192
+    dimensions: 1024
+    status: chosen
