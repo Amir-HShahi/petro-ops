@@ -10,7 +10,12 @@ from offline_rag.knowledge.application.errors import (
     KnowledgeIngestionNotFoundError,
     KnowledgeItemNotFoundError,
 )
-from offline_rag.knowledge.application.ports import OutboxMessage, PageReading
+from offline_rag.knowledge.application.ports import (
+    IngestionQueueDepth,
+    KnowledgeIngestionSummary,
+    OutboxMessage,
+    PageReading,
+)
 from offline_rag.knowledge.domain.document_format import DocumentFormat
 from offline_rag.knowledge.domain.extracted_content import ExtractedContent
 from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus, KnowledgeIngestion
@@ -119,6 +124,25 @@ class InMemoryKnowledgeIngestionRepository:
         )
         return [copy.deepcopy(ingestion) for ingestion in stalled[:limit]]
 
+    def find_recent(self, limit: int) -> list[KnowledgeIngestionSummary]:
+        recent = sorted(
+            self.ingestions.values(),
+            key=lambda ingestion: (ingestion.created_at, ingestion.ingestion_id),
+            reverse=True,
+        )
+        summaries = []
+        for ingestion in recent[:limit]:
+            item = self.item_repository.get_by_id(ingestion.item_id)
+            version = item.get_version(ingestion.version_tag)
+            summaries.append(
+                KnowledgeIngestionSummary(
+                    ingestion=copy.deepcopy(ingestion),
+                    source_file_name=version.source_file_name,
+                    document_format=version.document_format,
+                )
+            )
+        return summaries
+
 
 class InMemoryOutbox:
     """Reads and writes the messages of an `InMemoryKnowledgeIngestionRepository`."""
@@ -139,6 +163,9 @@ class InMemoryOutbox:
 
     def add(self, message: OutboxMessage) -> None:
         self.ingestion_repository.messages.append(message)
+
+    def count_unpublished(self) -> int:
+        return len(self.find_unpublished(len(self.ingestion_repository.messages)))
 
 
 class FakeIngestionMessagePublisher:
@@ -165,6 +192,24 @@ class FakeNodeDirectory:
 
     def has_node(self, node_id: NodeIdentifier) -> bool:
         return node_id in self._node_ids
+
+    def list_node_ids(self) -> list[NodeIdentifier]:
+        return sorted(self._node_ids, key=lambda node_id: node_id.value)
+
+
+class FakeIngestionQueueMonitor:
+    """Returns the queue depths it was given, or raises the error it was given."""
+
+    def __init__(
+        self, depths: list[IngestionQueueDepth] | None = None, error: Exception | None = None
+    ) -> None:
+        self.depths = depths or []
+        self.error = error
+
+    def get_queue_depths(self) -> list[IngestionQueueDepth]:
+        if self.error is not None:
+            raise self.error
+        return list(self.depths)
 
 
 class InMemorySourceFileStore:

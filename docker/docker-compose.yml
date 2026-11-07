@@ -1,5 +1,8 @@
 # Postgres and RabbitMQ for local ingestion (ADR 0004, ADR 0005).
-# Start: docker compose -f docker/docker-compose.yml up -d
+# Start:
+#   docker compose -f docker/docker-compose.yml up -d --wait postgres rabbitmq
+#   docker compose -f docker/docker-compose.yml run --rm rabbitmq-policies
+# `up --wait` on every service fails, because rabbitmq-policies exits once it is done.
 # Every port is bound to 127.0.0.1 only. Host port 5432 belongs to another project,
 # so Postgres listens on 55432.
 name: petro-ops
@@ -32,6 +35,9 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: petro_ops
       RABBITMQ_DEFAULT_PASS: petro_ops
+      # Queue counts refresh every second instead of every 5 s, so the pipeline
+      # page follows a demo closely (ADR 0008).
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit collect_statistics_interval 1000"
     ports:
       - "127.0.0.1:5672:5672"
       - "127.0.0.1:15672:15672"

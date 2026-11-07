@@ -41,6 +41,19 @@ class MessageBrokerUnavailableError(InfrastructureError):
         )
 
 
+class QueueMonitorUnavailableError(InfrastructureError):
+    """The broker's management API could not be read for queue counts (ADR 0008)."""
+
+    code = "KNOWLEDGE_QUEUE_MONITOR_UNAVAILABLE"
+
+    def __init__(self) -> None:
+        """Create the error."""
+        super().__init__(
+            "The queue counts of the local message broker are not available. Check that "
+            "RabbitMQ runs with its management plugin and RABBITMQ_MANAGEMENT_URL is right.",
+        )
+
+
 class SourceFileStorageError(InfrastructureError):
     """A file could not be written to or read from the local file store."""
 

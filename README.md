@@ -53,7 +53,7 @@ uv run knowledge status <ingestion_id>
 uv run knowledge show-content <item_id> --limit 20
 ```
 
-Postgres and RabbitMQ run in Docker: `docker compose -f docker/docker-compose.yml up -d`. The same actions are available over HTTP with `uv run knowledge api run`. How to start the relay, the workers and the API is in [docs/running-ingestion.md](docs/running-ingestion.md).
+Postgres and RabbitMQ run in Docker: `docker compose -f docker/docker-compose.yml up -d`. The same actions are available over HTTP with `uv run knowledge api run`, which also serves a live view of the pipeline at <http://127.0.0.1:8000/pipeline>. `docker/pipeline-up.sh` starts all of it with one command. See the [quick start](docs/running-ingestion.md#quick-start); the same file covers the options, the demo script and starting each part by hand.
 
 Each command prints its result to stdout as JSON. Errors go to stderr as [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details with a code from `docs/errors.md`, and log lines go to stderr as JSON. Set `LOG_LEVEL=debug` to see every step. Add `--help` to any command for all its options.
 

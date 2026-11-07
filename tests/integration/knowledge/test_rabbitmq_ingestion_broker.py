@@ -5,7 +5,6 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import Any
 
-import pika
 import pytest
 from pika.adapters.blocking_connection import BlockingChannel
 
@@ -23,9 +22,7 @@ from offline_rag.knowledge.infrastructure.rabbitmq_topology import (
     DEAD_LETTER_QUEUE,
     QUEUE_BY_LANE,
     RETRY_QUEUE,
-    declare_ingestion_topology,
 )
-from offline_rag.settings import Settings
 
 pytestmark = pytest.mark.integration
 
@@ -35,32 +32,6 @@ WAIT_S = 10
 
 def _message(outbox_id: str = "m1", lane: IngestionLane = IngestionLane.TEXT) -> OutboxMessage:
     return OutboxMessage(outbox_id=outbox_id, ingestion_id="ing-1", lane=lane, created_at=NOW)
-
-
-@pytest.fixture
-def rabbitmq_url() -> str:
-    return Settings().rabbitmq_url
-
-
-@pytest.fixture
-def channel(rabbitmq_url: str) -> Iterator[BlockingChannel]:
-    """Yield a channel to a broker whose ingestion queues are declared and empty.
-
-    The queue names are fixed by the design, so tests share them and purge them.
-    """
-    try:
-        connection = pika.BlockingConnection(pika.URLParameters(rabbitmq_url))
-    except pika.exceptions.AMQPError as error:
-        pytest.skip(f"RabbitMQ at RABBITMQ_URL is not reachable: {error!r}")
-    opened = connection.channel()
-    declare_ingestion_topology(opened)
-    queues = [*QUEUE_BY_LANE.values(), RETRY_QUEUE, DEAD_LETTER_QUEUE]
-    for queue in queues:
-        opened.queue_purge(queue)
-    yield opened
-    for queue in queues:
-        opened.queue_purge(queue)
-    connection.close()
 
 
 @pytest.fixture

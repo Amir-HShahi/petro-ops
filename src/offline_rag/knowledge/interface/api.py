@@ -8,13 +8,15 @@ import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Annotated, Any
 
 import structlog
 import uvicorn
 from fastapi import FastAPI, File, Form, Query, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from offline_rag.bootstrap import build_knowledge, configure_logging
 from offline_rag.knowledge.application.commands import ReingestKnowledgeItem, SubmitKnowledgeItem
@@ -38,7 +40,10 @@ from offline_rag.knowledge.interface.problem_details import (
 from offline_rag.knowledge.interface.response_bodies import (
     content_body,
     ingestion_body,
+    nodes_body,
+    queue_depths_body,
     receipt_body,
+    recent_ingestions_body,
 )
 from offline_rag.settings import Settings
 from offline_rag.shared_kernel.errors import ProjectError
@@ -53,6 +58,8 @@ REQUEST_ID_HEADER = "X-Request-ID"
 # cannot break log lines (docs/errors.md, "Request ID").
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 ACCEPTED = 202
+PIPELINE_PAGE_DIR = Path(__file__).parent / "pipeline_page"
+MAX_RECENT_INGESTIONS = 100
 
 
 def create_app(
@@ -74,6 +81,11 @@ def create_app(
         min_page_text_chars: The threshold below which a PDF page counts as having no text.
     """
     app = FastAPI(title="Knowledge ingestion API", docs_url="/docs", redoc_url=None)
+    app.mount(
+        "/pipeline/assets",
+        StaticFiles(directory=PIPELINE_PAGE_DIR / "assets"),
+        name="pipeline_assets",
+    )
 
     @app.middleware("http")
     async def bind_request_id(
@@ -172,6 +184,33 @@ def create_app(
         )
         response.headers["Location"] = f"/knowledge-ingestions/{receipt.ingestion_id}"
         return receipt_body(receipt)
+
+    @app.get("/pipeline", include_in_schema=False)
+    def pipeline_page() -> FileResponse:
+        """Serve the live page that follows ingestions and queues (ADR 0008)."""
+        return FileResponse(PIPELINE_PAGE_DIR / "pipeline.html", media_type="text/html")
+
+    @app.get("/knowledge-ingestions")
+    def recent_ingestions(
+        limit: Annotated[
+            int, Query(ge=1, le=MAX_RECENT_INGESTIONS, description="Ingestions to return.")
+        ] = 20,
+    ) -> dict[str, Any]:
+        """Return the most recent ingestions with their files, newest first."""
+        return recent_ingestions_body(queries.list_recent_ingestions(limit))
+
+    @app.get("/ingestion-queues")
+    def ingestion_queues() -> dict[str, Any]:
+        """Return the broker queues of the workers and the messages still in the outbox."""
+        return queue_depths_body(
+            queries.get_queue_depths(),
+            unpublished_outbox_messages=queries.count_unpublished_messages(),
+        )
+
+    @app.get("/nodes")
+    def nodes() -> dict[str, Any]:
+        """Return the registered Nodes a file can be submitted for."""
+        return nodes_body(queries.list_node_ids())
 
     @app.get("/knowledge-ingestions/{ingestion_id}")
     def status(ingestion_id: str) -> dict[str, Any]:

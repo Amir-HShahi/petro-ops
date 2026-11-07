@@ -41,3 +41,15 @@ def test_registry_error_is_raised_when_file_content_is_invalid(tmp_path: Path, r
 
     with pytest.raises(NodeRegistryUnavailableError):
         CsvNodeDirectory(registry).has_node(NodeIdentifier("platform_sp12"))
+
+
+def test_node_ids_are_listed_sorted_when_registry_is_read():
+    node_ids = [node_id.value for node_id in CsvNodeDirectory(REGISTRY_PATH).list_node_ids()]
+
+    assert node_ids == sorted(node_ids)
+    assert {"national_oil_company", "platform_sp12", "sp12_inspection_team"} <= set(node_ids)
+
+
+def test_registry_error_is_raised_when_listing_a_missing_file(tmp_path: Path):
+    with pytest.raises(NodeRegistryUnavailableError):
+        CsvNodeDirectory(tmp_path / "missing.csv").list_node_ids()

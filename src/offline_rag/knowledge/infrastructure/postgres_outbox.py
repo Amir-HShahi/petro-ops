@@ -65,6 +65,18 @@ class PostgresOutbox:
         with self._database.transaction("add_message") as connection:
             insert_outbox_message(connection, message)
 
+    def count_unpublished(self) -> int:
+        """Return how many messages wait for the relay.
+
+        Raises:
+            KnowledgeStorageError: The database cannot be read.
+        """
+        with self._database.transaction("count_unpublished_messages") as connection:
+            row = connection.execute(
+                "SELECT count(*) AS unpublished FROM outbox_message WHERE published_at IS NULL"
+            ).fetchone()
+        return int(row["unpublished"]) if row else 0
+
 
 def insert_outbox_message(connection: psycopg.Connection[DictRow], message: OutboxMessage) -> None:
     """Insert a message on an open connection, inside the caller's transaction."""

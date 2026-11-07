@@ -9,7 +9,8 @@ from offline_rag.knowledge.application.errors import (
     IngestionStatusChangedError,
     KnowledgeIngestionNotFoundError,
 )
-from offline_rag.knowledge.application.ports import OutboxMessage
+from offline_rag.knowledge.application.ports import KnowledgeIngestionSummary, OutboxMessage
+from offline_rag.knowledge.domain.document_format import DocumentFormat
 from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus, KnowledgeIngestion
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
 from offline_rag.knowledge.domain.version_tag import VersionTag
@@ -44,6 +45,14 @@ WHERE ingestion.status IN ('queued', 'reading_pages')
     )
 ORDER BY ingestion.updated_at, ingestion.ingestion_id
 LIMIT %(limit)s
+"""
+
+_SELECT_RECENT = """
+SELECT ingestion.*, version.source_file_name, version.document_format
+FROM knowledge_ingestion AS ingestion
+JOIN knowledge_version AS version USING (item_id, version_tag)
+ORDER BY ingestion.created_at DESC, ingestion.ingestion_id DESC
+LIMIT %s
 """
 
 
@@ -141,6 +150,23 @@ class PostgresKnowledgeIngestionRepository:
                 _SELECT_STALLED, {"stalled_since": stalled_since, "limit": limit}
             ).fetchall()
         return [_ingestion_from_row(row) for row in rows]
+
+    def find_recent(self, limit: int) -> list[KnowledgeIngestionSummary]:
+        """Return up to `limit` ingestions with their file, the most recently created first.
+
+        Raises:
+            KnowledgeStorageError: The database cannot be read.
+        """
+        with self._database.transaction("find_recent_ingestions") as connection:
+            rows = connection.execute(_SELECT_RECENT, (limit,)).fetchall()
+        return [
+            KnowledgeIngestionSummary(
+                ingestion=_ingestion_from_row(row),
+                source_file_name=row["source_file_name"],
+                document_format=DocumentFormat(row["document_format"]),
+            )
+            for row in rows
+        ]
 
 
 def _write(

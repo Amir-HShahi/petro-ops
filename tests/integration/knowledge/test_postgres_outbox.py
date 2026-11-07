@@ -95,3 +95,17 @@ def test_message_is_refused_when_its_ingestion_does_not_exist(outbox: PostgresOu
 
     with pytest.raises(KnowledgeStorageError):
         outbox.add(orphan)
+
+
+def test_unpublished_messages_are_counted_when_some_were_published(outbox: PostgresOutbox):
+    outbox.add(_message("m-second", minutes_ago=1))
+    outbox.add(_message("m-third"))
+    outbox.mark_published("m-first", NOW)
+
+    assert outbox.count_unpublished() == 2
+
+
+def test_no_unpublished_messages_are_counted_when_all_were_published(outbox: PostgresOutbox):
+    outbox.mark_published("m-first", NOW)
+
+    assert outbox.count_unpublished() == 0

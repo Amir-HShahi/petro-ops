@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ingestion pipeline</title>
+  <link rel="stylesheet" href="/pipeline/assets/pipeline.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Knowledge ingestion pipeline</h1>
+      <p class="subtitle">Live view of KnowledgeIngestions and the RabbitMQ queues. Everything runs on this machine.</p>
+    </div>
+    <div class="live" id="live" data-state="connecting">
+      <span class="dot" aria-hidden="true"></span>
+      <span id="live-text">Connecting…</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel upload" aria-labelledby="upload-title">
+      <h2 id="upload-title">Submit a file</h2>
+      <form id="upload-form">
+        <label>File <span class="hint">DOC, DOCX or PDF</span>
+          <input type="file" name="file" required accept=".doc,.docx,.pdf">
+        </label>
+        <label>Owner Node
+          <select name="node_id" id="node-select" required>
+            <option value="">Loading Nodes…</option>
+          </select>
+        </label>
+        <label>Document type
+          <input type="text" name="document_type" list="document-types" placeholder="inspection_report">
+          <datalist id="document-types">
+            <option value="inspection_report">
+            <option value="shift_report">
+            <option value="project_report">
+            <option value="maintenance_record">
+            <option value="procedure">
+            <option value="issue_resolution">
+            <option value="personnel_profile">
+            <option value="node_description">
+            <option value="rfp">
+            <option value="proposal">
+          </datalist>
+        </label>
+        <button type="submit" id="upload-button">Submit</button>
+      </form>
+      <p class="message" id="upload-message" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="panel broker" aria-labelledby="broker-title">
+      <div class="panel-head">
+        <h2 id="broker-title">Queues</h2>
+        <p class="hint" id="broker-hint">RabbitMQ counts are sampled every few seconds.</p>
+      </div>
+      <div class="flow" id="flow">
+        <article class="queue outbox" data-queue="outbox">
+          <h3>Outbox</h3>
+          <p class="role">Postgres rows waiting for the relay</p>
+          <p class="big"><span data-field="unpublished">–</span> <span class="unit">unpublished</span></p>
+          <div class="tokens" data-field="tokens"></div>
+        </article>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="lanes">
+          <article class="queue" data-queue="ingestion">
+            <h3>ingestion</h3>
+            <p class="role">Text lane · Docling workers</p>
+            <dl class="counts">
+              <div><dt>waiting</dt><dd data-field="ready">–</dd></div>
+              <div><dt>in progress</dt><dd data-field="unacked">–</dd></div>
+              <div><dt>consumers</dt><dd data-field="consumers">–</dd></div>
+            </dl>
+            <div class="tokens" data-field="tokens"></div>
+          </article>
+          <article class="queue" data-queue="ingestion.vision">
+            <h3>ingestion.vision</h3>
+            <p class="role">Vision lane · Gemma + glm-ocr, one at a time</p>
+            <dl class="counts">
+              <div><dt>waiting</dt><dd data-field="ready">–</dd></div>
+              <div><dt>in progress</dt><dd data-field="unacked">–</dd></div>
+              <div><dt>consumers</dt><dd data-field="consumers">–</dd></div>
+            </dl>
+            <div class="tokens" data-field="tokens"></div>
+          </article>
+        </div>
+        <div class="side-queues">
+          <article class="queue retry" data-queue="ingestion.retry">
+            <h3>ingestion.retry</h3>
+            <p class="role">Failed steps wait here, then go back</p>
+            <dl class="counts">
+              <div><dt>waiting</dt><dd data-field="ready">–</dd></div>
+              <div><dt>in progress</dt><dd data-field="unacked">–</dd></div>
+              <div><dt>consumers</dt><dd data-field="consumers">–</dd></div>
+            </dl>
+            <div class="tokens" data-field="tokens"></div>
+          </article>
+          <article class="queue dlq" data-queue="ingestion.dlq">
+            <h3>ingestion.dlq</h3>
+            <p class="role">Gave up after the last attempt</p>
+            <dl class="counts">
+              <div><dt>waiting</dt><dd data-field="ready">–</dd></div>
+              <div><dt>in progress</dt><dd data-field="unacked">–</dd></div>
+              <div><dt>consumers</dt><dd data-field="consumers">–</dd></div>
+            </dl>
+            <div class="tokens" data-field="tokens"></div>
+          </article>
+        </div>
+      </div>
+      <p class="message error" id="broker-error" hidden></p>
+    </section>
+
+    <section class="panel board-panel" aria-labelledby="board-title">
+      <div class="panel-head">
+        <h2 id="board-title">Recent ingestions</h2>
+        <p class="hint">Click a completed card to see its extracted blocks.</p>
+      </div>
+      <div class="board" id="board">
+        <div class="column" data-status="queued"><h3>Queued</h3><div class="cards"></div></div>
+        <div class="column" data-status="extracting"><h3>Extracting</h3><div class="cards"></div></div>
+        <div class="column" data-status="reading_pages"><h3>Reading pages</h3><div class="cards"></div></div>
+        <div class="column" data-status="completed"><h3>Completed</h3><div class="cards"></div></div>
+        <div class="column" data-status="failed"><h3>Failed</h3><div class="cards"></div></div>
+      </div>
+      <p class="message error" id="board-error" hidden></p>
+    </section>
+  </main>
+
+  <dialog id="blocks-dialog" aria-labelledby="blocks-title">
+    <div class="dialog-head">
+      <div>
+        <h2 id="blocks-title">Extracted blocks</h2>
+        <p class="hint" id="blocks-summary"></p>
+      </div>
+      <button type="button" class="close" id="blocks-close" aria-label="Close">×</button>
+    </div>
+    <ol class="blocks" id="blocks-list"></ol>
+  </dialog>
+
+  <script src="/pipeline/assets/pipeline.js"></script>
+</body>
+</html>

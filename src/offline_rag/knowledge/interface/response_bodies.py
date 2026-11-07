@@ -3,6 +3,7 @@
 from typing import Any
 
 from offline_rag.knowledge.application.ingestion_queueing import IngestionReceipt
+from offline_rag.knowledge.application.ports import IngestionQueueDepth, KnowledgeIngestionSummary
 from offline_rag.knowledge.domain.extracted_content import (
     ContentBlockKind,
     ContentSource,
@@ -10,6 +11,7 @@ from offline_rag.knowledge.domain.extracted_content import (
 )
 from offline_rag.knowledge.domain.knowledge_ingestion import KnowledgeIngestion
 from offline_rag.knowledge.domain.version_tag import VersionTag
+from offline_rag.shared_kernel.node_identifier import NodeIdentifier
 
 
 def receipt_body(receipt: IngestionReceipt) -> dict[str, Any]:
@@ -36,6 +38,43 @@ def ingestion_body(ingestion: KnowledgeIngestion) -> dict[str, Any]:
         "created_at": ingestion.created_at.isoformat(),
         "updated_at": ingestion.updated_at.isoformat(),
     }
+
+
+def recent_ingestions_body(summaries: list[KnowledgeIngestionSummary]) -> dict[str, Any]:
+    """Return the body for the most recent ingestions, each with the file it reads."""
+    return {
+        "ingestions": [
+            {
+                **ingestion_body(summary.ingestion),
+                "source_file_name": summary.source_file_name,
+                "document_format": summary.document_format.value,
+            }
+            for summary in summaries
+        ]
+    }
+
+
+def queue_depths_body(
+    depths: list[IngestionQueueDepth], *, unpublished_outbox_messages: int
+) -> dict[str, Any]:
+    """Return the body for the broker queues and the messages still in the outbox."""
+    return {
+        "queues": [
+            {
+                "queue": depth.queue,
+                "messages_ready": depth.messages_ready,
+                "messages_unacked": depth.messages_unacked,
+                "consumers": depth.consumers,
+            }
+            for depth in depths
+        ],
+        "unpublished_outbox_messages": unpublished_outbox_messages,
+    }
+
+
+def nodes_body(node_ids: list[NodeIdentifier]) -> dict[str, Any]:
+    """Return the body for the registered Nodes."""
+    return {"nodes": [{"node_id": node_id.value} for node_id in node_ids]}
 
 
 def content_body(

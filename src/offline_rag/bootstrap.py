@@ -4,6 +4,7 @@ import logging
 import sys
 from dataclasses import dataclass
 
+import pika
 import structlog
 
 from offline_rag.knowledge.application.extract_knowledge_content import (
@@ -58,6 +59,9 @@ from offline_rag.knowledge.infrastructure.rabbitmq_ingestion_consumer import (
 )
 from offline_rag.knowledge.infrastructure.rabbitmq_ingestion_message_publisher import (
     RabbitMqIngestionMessagePublisher,
+)
+from offline_rag.knowledge.infrastructure.rabbitmq_management_queue_monitor import (
+    RabbitMqManagementQueueMonitor,
 )
 from offline_rag.knowledge.infrastructure.system_clock import SystemClock
 from offline_rag.knowledge.infrastructure.uuid_id_generator import UuidIdGenerator
@@ -167,9 +171,10 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
         min_page_text_chars=settings.min_page_text_chars,
     )
 
+    node_directory = CsvNodeDirectory(settings.node_registry_path)
     submit_handler = SubmitKnowledgeItemHandler(
         ingestion_repository=ingestion_repository,
-        node_directory=CsvNodeDirectory(settings.node_registry_path),
+        node_directory=node_directory,
         source_file_store=source_file_store,
         clock=clock,
         id_generator=id_generator,
@@ -213,6 +218,12 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
             ingestion_repository=ingestion_repository,
             repository=knowledge_item_repository,
             extracted_content_repository=extracted_content_repository,
+            outbox=outbox,
+            node_directory=node_directory,
+            queue_monitor=RabbitMqManagementQueueMonitor(
+                settings.rabbitmq_management_url,
+                virtual_host=pika.URLParameters(settings.rabbitmq_url).virtual_host,
+            ),
         ),
         ingestion_repository=ingestion_repository,
         database=database,

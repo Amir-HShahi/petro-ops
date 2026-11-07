@@ -240,3 +240,47 @@ def test_second_start_is_refused_and_nothing_stored_when_status_has_moved_on(
 
     assert repository.get_by_id("ing-1").status == IngestionStatus.EXTRACTING
     assert [row[0] for row in _outbox(postgres_url)] == ["m1"]
+
+
+def test_recent_ingestions_come_newest_first_with_their_file_when_found(
+    repository: PostgresKnowledgeIngestionRepository,
+):
+    repository.add_with_item(_item(), _ingestion(), _message("m1"))
+    ended = repository.get_by_id("ing-1")
+    ended.start_extraction(NOW)
+    ended.complete(blocks_for_review=2, now=NOW)
+    repository.save(ended)
+    later = KnowledgeIngestion.queue(
+        ingestion_id="ing-2", item_id="ki-1", version_tag=V1, queued_at=NOW + timedelta(minutes=1)
+    )
+    repository.add(later, _message("m2", "ing-2"))
+
+    recent = repository.find_recent(10)
+
+    assert [summary.ingestion for summary in recent] == [later, ended]
+    assert {summary.source_file_name for summary in recent} == {"report.pdf"}
+    assert {summary.document_format for summary in recent} == {DocumentFormat.PDF}
+
+
+def test_recent_ingestions_stop_at_the_limit_when_there_are_more(
+    repository: PostgresKnowledgeIngestionRepository,
+):
+    repository.add_with_item(_item(), _ingestion(), _message("m1"))
+    repository.add_with_item(_item("ki-2"), _ingestion_of("ki-2", "ing-2"), _message("m2", "ing-2"))
+
+    assert [summary.ingestion.ingestion_id for summary in repository.find_recent(1)] == ["ing-2"]
+
+
+def test_no_recent_ingestions_are_found_when_none_exist(
+    repository: PostgresKnowledgeIngestionRepository,
+):
+    assert repository.find_recent(10) == []
+
+
+def _ingestion_of(item_id: str, ingestion_id: str) -> KnowledgeIngestion:
+    return KnowledgeIngestion.queue(
+        ingestion_id=ingestion_id,
+        item_id=item_id,
+        version_tag=V1,
+        queued_at=NOW + timedelta(minutes=1),
+    )

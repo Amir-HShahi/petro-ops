@@ -5,17 +5,20 @@ from fastapi.testclient import TestClient
 from tests.fakes.knowledge import (
     FakeClock,
     FakeIdGenerator,
+    FakeIngestionQueueMonitor,
     FakeNodeDirectory,
     InMemoryEventPublisher,
     InMemoryExtractedContentRepository,
     InMemoryKnowledgeIngestionRepository,
     InMemoryKnowledgeItemRepository,
+    InMemoryOutbox,
     InMemorySourceFileStore,
 )
 
 from offline_rag.knowledge.application.knowledge_ingestion_queries import (
     KnowledgeIngestionQueries,
 )
+from offline_rag.knowledge.application.ports import IngestionQueueDepth
 from offline_rag.knowledge.application.reingest_knowledge_item import (
     ReingestKnowledgeItemHandler,
 )
@@ -26,6 +29,7 @@ from offline_rag.knowledge.application.submit_knowledge_item import (
 from offline_rag.knowledge.domain.document_format import DocumentFormat
 from offline_rag.knowledge.domain.extracted_content import ContentBlock, ExtractedContent
 from offline_rag.knowledge.domain.version_tag import VersionTag
+from offline_rag.knowledge.infrastructure.errors import QueueMonitorUnavailableError
 from offline_rag.knowledge.interface.api import PROBLEM_MEDIA_TYPE, REQUEST_ID_HEADER, create_app
 
 NOW = datetime(2026, 11, 4, 9, 0, tzinfo=UTC)
@@ -53,8 +57,17 @@ def contents() -> InMemoryExtractedContentRepository:
 
 
 @pytest.fixture
+def queue_monitor() -> FakeIngestionQueueMonitor:
+    return FakeIngestionQueueMonitor(
+        [IngestionQueueDepth(queue="ingestion", messages_ready=2, messages_unacked=1, consumers=3)]
+    )
+
+
+@pytest.fixture
 def client(
-    ingestions: InMemoryKnowledgeIngestionRepository, contents: InMemoryExtractedContentRepository
+    ingestions: InMemoryKnowledgeIngestionRepository,
+    contents: InMemoryExtractedContentRepository,
+    queue_monitor: FakeIngestionQueueMonitor,
 ) -> TestClient:
     clock = FakeClock(NOW)
     id_generator = FakeIdGenerator()
@@ -78,6 +91,9 @@ def client(
             ingestion_repository=ingestions,
             repository=ingestions.item_repository,
             extracted_content_repository=contents,
+            outbox=InMemoryOutbox(ingestions),
+            node_directory=FakeNodeDirectory([NODE_ID, "platform_sp12"]),
+            queue_monitor=queue_monitor,
         ),
         max_file_mb=MAX_FILE_MB,
         min_page_text_chars=20,
@@ -248,3 +264,87 @@ def test_new_request_id_is_made_when_the_callers_one_is_not_plain(client: TestCl
 
     assert response.headers[REQUEST_ID_HEADER] != "bad id with spaces"
     assert len(response.headers[REQUEST_ID_HEADER]) == 8
+
+
+def test_recent_ingestions_carry_their_file_when_listed(client: TestClient):
+    ingestion_id = _submit(client).json()["ingestion_id"]
+
+    response = client.get("/knowledge-ingestions", params={"limit": 5})
+
+    [listed] = response.json()["ingestions"]
+    assert response.status_code == 200
+    assert listed["ingestion_id"] == ingestion_id
+    assert listed["status"] == "queued"
+    assert listed["source_file_name"] == "report.pdf"
+    assert listed["document_format"] == "pdf"
+
+
+def test_recent_ingestions_are_limited_when_a_limit_is_given(client: TestClient):
+    _submit(client)
+    _submit(client, content=PDF_CONTENT + b" second")
+
+    response = client.get("/knowledge-ingestions", params={"limit": 1})
+
+    assert len(response.json()["ingestions"]) == 1
+
+
+@pytest.mark.parametrize("limit", [0, 101])
+def test_recent_ingestions_are_refused_when_the_limit_is_out_of_range(
+    client: TestClient, limit: int
+):
+    response = client.get("/knowledge-ingestions", params={"limit": limit})
+
+    assert response.status_code == 422
+    assert response.json()["type"] == "KNOWLEDGE_REQUEST_INVALID"
+
+
+def test_queues_and_unpublished_messages_are_returned_when_asked(client: TestClient):
+    _submit(client)
+
+    response = client.get("/ingestion-queues")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "queues": [
+            {"queue": "ingestion", "messages_ready": 2, "messages_unacked": 1, "consumers": 3}
+        ],
+        "unpublished_outbox_messages": 1,
+    }
+
+
+def test_queues_answer_503_when_the_management_api_is_unavailable(
+    client: TestClient, queue_monitor: FakeIngestionQueueMonitor
+):
+    queue_monitor.error = QueueMonitorUnavailableError()
+
+    response = client.get("/ingestion-queues")
+
+    assert response.status_code == 503
+    assert response.json()["type"] == "KNOWLEDGE_QUEUE_MONITOR_UNAVAILABLE"
+
+
+def test_registered_nodes_are_listed_sorted_when_asked(client: TestClient):
+    response = client.get("/nodes")
+
+    assert response.json() == {"nodes": [{"node_id": "platform_sp12"}, {"node_id": NODE_ID}]}
+
+
+def test_pipeline_page_is_served_with_its_assets_when_opened(client: TestClient):
+    page = client.get("/pipeline")
+    css = client.get("/pipeline/assets/pipeline.css")
+    script = client.get("/pipeline/assets/pipeline.js")
+
+    assert page.status_code == 200
+    assert page.headers["content-type"].startswith("text/html")
+    assert "/pipeline/assets/pipeline.js" in page.text
+    assert css.status_code == 200
+    assert script.status_code == 200
+
+
+def test_pipeline_page_loads_nothing_from_other_hosts_when_opened(client: TestClient):
+    sources = [
+        client.get(path).text
+        for path in ("/pipeline", "/pipeline/assets/pipeline.css", "/pipeline/assets/pipeline.js")
+    ]
+
+    assert not any("http://" in source or "https://" in source for source in sources)
