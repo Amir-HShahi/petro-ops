@@ -1,11 +1,17 @@
 import json
-import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 import structlog
 
+from offline_rag.bootstrap import build_knowledge
+from offline_rag.knowledge.application.commands import RunIngestionStep
+from offline_rag.knowledge.application.ports import IngestionLane
+from offline_rag.knowledge.infrastructure.postgres_database import PostgresDatabase
+from offline_rag.knowledge.infrastructure.postgres_knowledge_item_repository import (
+    PostgresKnowledgeItemRepository,
+)
 from offline_rag.knowledge.interface.cli import EXIT_FAILED, EXIT_OK, main
 from offline_rag.settings import Settings
 
@@ -23,14 +29,12 @@ def _reset_logging() -> Iterator[None]:
 
 
 @pytest.fixture
-def settings(tmp_path: Path) -> Settings:
+def settings(tmp_path: Path, postgres_url: str) -> Settings:
     return Settings(
         data_dir=tmp_path / "data",
+        database_url=postgres_url,
         node_registry_path=ROOT / "fixtures" / "registry" / "nodes.csv",
         log_level="error",
-        # Nothing listens on port 9, so the LVM step fails at once instead of
-        # calling a real model; test_lvm_on_real_scans.py covers the real one.
-        ollama_url="http://127.0.0.1:9",
         prompts_dir=ROOT / "prompts",
         model_manifest_path=ROOT / "models" / "manifest.yaml",
     )
@@ -67,15 +71,11 @@ def test_fixture_file_is_registered_when_submitted(
 
     result = json.loads(capsys.readouterr().out)
     assert exit_code == EXIT_OK
-    with sqlite3.connect(settings.data_dir / "knowledge.sqlite3") as connection:
-        row = connection.execute(
-            "SELECT document_format, source_file_reference, metadata_json "
-            "FROM knowledge_versions WHERE item_id = ?",
-            (result["item_id"],),
-        ).fetchone()
-    assert row[0] == document_format
-    assert (settings.data_dir / "source_files" / row[1]).is_file()
-    assert json.loads(row[2])["tags"] == ["riser"]
+    with PostgresDatabase(settings.database_url, pool_size=1, connect_timeout_s=2) as database:
+        version = PostgresKnowledgeItemRepository(database).get_by_id(result["item_id"]).versions[0]
+    assert version.document_format.value == document_format
+    assert (settings.data_dir / "source_files" / version.source_file_reference).is_file()
+    assert version.metadata.tags == ("riser",)
 
 
 @pytest.mark.parametrize(
@@ -120,148 +120,110 @@ def test_problem_details_are_printed_when_submission_fails(
     assert "Traceback" not in problem["detail"]
 
 
+INSPECTION_DOCX = FIXTURE_DOCS / "synthetic/inspection_sp12_riser_r3_2024.docx"
+
+
 def _run(arguments: list[str], settings: Settings, capsys: pytest.CaptureFixture[str]) -> dict:  # type: ignore[type-arg]
     assert main(arguments, settings=settings) == EXIT_OK
     return json.loads(capsys.readouterr().out)  # type: ignore[no-any-return]
 
 
-def test_content_is_extracted_when_file_is_submitted(
+def _problem(arguments: list[str], settings: Settings, capsys: pytest.CaptureFixture[str]) -> dict:  # type: ignore[type-arg]
+    assert main(arguments, settings=settings) == EXIT_FAILED
+    return json.loads(capsys.readouterr().err.strip().splitlines()[-1])  # type: ignore[no-any-return]
+
+
+def _submit_docx(settings: Settings, capsys: pytest.CaptureFixture[str]) -> dict:  # type: ignore[type-arg]
+    return _run(
+        ["submit", str(INSPECTION_DOCX), "--node", "sp12_inspection_team"], settings, capsys
+    )
+
+
+def _run_text_step(settings: Settings, ingestion_id: str) -> None:
+    """Do what a text worker does with the ingestion's message."""
+    knowledge = build_knowledge(settings)
+    try:
+        knowledge.run_step_handler.run(
+            RunIngestionStep(ingestion_id=ingestion_id, lane=IngestionLane.TEXT)
+        )
+    finally:
+        knowledge.close()
+
+
+def test_ingestion_is_queued_when_file_is_submitted(
     settings: Settings, capsys: pytest.CaptureFixture[str]
 ):
-    result = _run(
-        [
-            "submit",
-            str(FIXTURE_DOCS / "synthetic/inspection_sp12_riser_r3_2024.docx"),
-            "--node",
-            "sp12_inspection_team",
-        ],
-        settings,
-        capsys,
-    )
+    submitted = _submit_docx(settings, capsys)
 
-    assert result["version_tag"] == "v1"
-    assert result["extraction"]["document_format"] == "docx"
-    assert result["extraction"]["block_count"] > 0
-    assert result["extraction"]["table_count"] == 2
+    status = _run(["status", submitted["ingestion_id"]], settings, capsys)
+
+    assert submitted["status"] == "queued"
+    assert submitted["version_tag"] == "v1"
+    assert status["status"] == "queued"
+    assert status["item_id"] == submitted["item_id"]
 
 
-def test_scanned_page_is_reported_for_the_lvm_when_scanned_pdf_is_submitted(
+def test_content_is_not_found_when_no_worker_has_run_yet(
     settings: Settings, capsys: pytest.CaptureFixture[str]
 ):
-    result = _run(
-        [
-            "submit",
-            str(FIXTURE_DOCS / "cases/scanned_sp12_riser_r3_baseline_2021.pdf"),
-            "--node",
-            "sp12_inspection_team",
-        ],
-        settings,
-        capsys,
-    )
+    submitted = _submit_docx(settings, capsys)
 
-    assert result["extraction"]["pages_without_text"] == [1]
+    problem = _problem(["show-content", submitted["item_id"]], settings, capsys)
 
-
-def test_registration_stands_without_extraction_when_doc_converter_is_missing(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-):
-    settings = Settings(
-        data_dir=tmp_path / "data",
-        node_registry_path=ROOT / "fixtures" / "registry" / "nodes.csv",
-        log_level="error",
-        libreoffice_path="soffice-that-does-not-exist",
-    )
-
-    result = _run(
-        [
-            "submit",
-            str(FIXTURE_DOCS / "cases/legacy_riser_ut_inspection_procedure_2017.doc"),
-            "--node",
-            "sp12_inspection_team",
-        ],
-        settings,
-        capsys,
-    )
-
-    assert result["extraction"] is None
-    assert main(["show-content", result["item_id"]], settings=settings) == EXIT_FAILED
-    problem = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
     assert problem["type"] == "KNOWLEDGE_EXTRACTED_CONTENT_NOT_FOUND"
 
 
-def test_blocks_are_printed_when_content_is_shown(
+def test_blocks_are_printed_when_the_text_step_has_run(
     settings: Settings, capsys: pytest.CaptureFixture[str]
 ):
-    submitted = _run(
-        [
-            "submit",
-            str(FIXTURE_DOCS / "synthetic/project_report_sp12_riser_r3_integrity.pdf"),
-            "--node",
-            "sp12_inspection_team",
-        ],
-        settings,
-        capsys,
-    )
+    submitted = _submit_docx(settings, capsys)
+    _run_text_step(settings, submitted["ingestion_id"])
 
     shown = _run(["show-content", submitted["item_id"], "--limit", "2"], settings, capsys)
+    status = _run(["status", submitted["ingestion_id"]], settings, capsys)
 
+    assert status["status"] == "completed"
+    assert shown["version_tag"] == "v1"
+    assert shown["extraction"]["table_count"] == 2
     assert len(shown["blocks"]) == 2
-    assert shown["blocks"][0]["page_number"] == 1
-    assert shown["blocks"][0]["source"] == "text_layer"
+    assert shown["blocks"][0]["heading_path"]
 
 
-def test_extraction_runs_again_when_extract_is_called(
+def test_new_ingestion_is_queued_when_a_completed_version_is_reingested(
     settings: Settings, capsys: pytest.CaptureFixture[str]
 ):
-    submitted = _run(
-        [
-            "submit",
-            str(FIXTURE_DOCS / "synthetic/project_report_sp12_riser_r3_integrity.pdf"),
-            "--node",
-            "sp12_inspection_team",
-        ],
-        settings,
-        capsys,
-    )
+    submitted = _submit_docx(settings, capsys)
+    _run_text_step(settings, submitted["ingestion_id"])
 
-    extracted = _run(["extract", submitted["item_id"], "--version-tag", "v1"], settings, capsys)
+    reingested = _run(["reingest", submitted["item_id"], "--version", "v1"], settings, capsys)
 
-    assert extracted["extraction"] == submitted["extraction"]
+    assert reingested["status"] == "queued"
+    assert reingested["ingestion_id"] != submitted["ingestion_id"]
+
+
+def test_reingest_is_refused_when_the_version_is_still_queued(
+    settings: Settings, capsys: pytest.CaptureFixture[str]
+):
+    submitted = _submit_docx(settings, capsys)
+
+    problem = _problem(["reingest", submitted["item_id"]], settings, capsys)
+
+    assert problem["type"] == "KNOWLEDGE_INGESTION_ALREADY_RUNNING"
+    assert problem["details"]["ingestion_id"] == submitted["ingestion_id"]
 
 
 @pytest.mark.parametrize(
     ("arguments", "code"),
     [
-        (["extract", "no-such-item"], "KNOWLEDGE_ITEM_NOT_FOUND"),
-        (["show-content", "no-such-item"], "KNOWLEDGE_EXTRACTED_CONTENT_NOT_FOUND"),
+        (["reingest", "no-such-item"], "KNOWLEDGE_ITEM_NOT_FOUND"),
+        (["show-content", "no-such-item"], "KNOWLEDGE_ITEM_NOT_FOUND"),
+        (["status", "no-such-ingestion"], "KNOWLEDGE_INGESTION_NOT_FOUND"),
     ],
 )
-def test_problem_details_are_printed_when_item_is_unknown(
+def test_problem_details_are_printed_when_the_id_is_unknown(
     settings: Settings, capsys: pytest.CaptureFixture[str], arguments: list[str], code: str
 ):
-    assert main(arguments, settings=settings) == EXIT_FAILED
+    problem = _problem(arguments, settings, capsys)
 
-    problem = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
     assert problem["type"] == code
     assert problem["status"] == 404
-
-
-def test_problem_details_are_printed_when_the_model_server_is_off(
-    settings: Settings, capsys: pytest.CaptureFixture[str]
-):
-    submitted = _run(
-        [
-            "submit",
-            str(FIXTURE_DOCS / "cases/scanned_sp12_riser_r3_baseline_2021.pdf"),
-            "--node",
-            "sp12_inspection_team",
-        ],
-        settings,
-        capsys,
-    )
-
-    assert main(["read-pages", submitted["item_id"]], settings=settings) == EXIT_FAILED
-
-    problem = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
-    assert problem["type"] == "KNOWLEDGE_MODEL_UNAVAILABLE"
-    assert problem["status"] == 503

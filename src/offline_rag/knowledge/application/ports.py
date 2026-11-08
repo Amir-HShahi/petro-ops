@@ -3,10 +3,12 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import Protocol
 
 from offline_rag.knowledge.domain.document_format import DocumentFormat
 from offline_rag.knowledge.domain.extracted_content import ExtractedContent
+from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus, KnowledgeIngestion
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
 from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.shared_kernel.domain_event import DomainEvent
@@ -29,11 +31,181 @@ class KnowledgeItemRepository(Protocol):
         ...
 
 
+class IngestionLane(StrEnum):
+    """The worker queue a message goes to, used as its routing key (ADR 0005)."""
+
+    TEXT = "text"
+    VISION = "vision"
+
+
+@dataclass(frozen=True, kw_only=True)
+class OutboxMessage:
+    """A message stored with the data it announces, published later by the relay (ADR 0005).
+
+    Attributes:
+        outbox_id: Unique id, also used by consumers to spot a message seen before.
+        ingestion_id: The run the message is for; it is the whole payload.
+        lane: Which workers receive it.
+        created_at: When it was written.
+    """
+
+    outbox_id: str
+    ingestion_id: str
+    lane: IngestionLane
+    created_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class KnowledgeIngestionSummary:
+    """An ingestion with the file it reads, for lists of recent runs (ADR 0008).
+
+    Attributes:
+        ingestion: The run.
+        source_file_name: The name the file was submitted under.
+        document_format: The format read from the file's content.
+    """
+
+    ingestion: KnowledgeIngestion
+    source_file_name: str
+    document_format: DocumentFormat
+
+
+class KnowledgeIngestionRepository(Protocol):
+    """Stores KnowledgeIngestions, writing each with its outbox message in one transaction."""
+
+    def add_with_item(
+        self, item: KnowledgeItem, ingestion: KnowledgeIngestion, message: OutboxMessage
+    ) -> None:
+        """Store a new KnowledgeItem, its first ingestion and the message that starts it."""
+        ...
+
+    def add(self, ingestion: KnowledgeIngestion, message: OutboxMessage) -> None:
+        """Store a new ingestion of an existing version and the message that starts it."""
+        ...
+
+    def save(
+        self,
+        ingestion: KnowledgeIngestion,
+        message: OutboxMessage | None = None,
+        *,
+        expected_status: IngestionStatus | None = None,
+    ) -> None:
+        """Store the new state of an ingestion, and the message for its next step if any.
+
+        Args:
+            ingestion: The ingestion in its new state.
+            message: The message that hands it to the next workers, if any.
+            expected_status: When given, store nothing unless the stored ingestion
+                still has this status, so two workers cannot both start one step.
+
+        Raises:
+            IngestionStatusChangedError: The stored status is not `expected_status`.
+        """
+        ...
+
+    def get_by_id(self, ingestion_id: str) -> KnowledgeIngestion:
+        """Return the ingestion with this id.
+
+        Raises:
+            KnowledgeIngestionNotFoundError: No ingestion has this id.
+        """
+        ...
+
+    def find_running(self, item_id: str, version_tag: VersionTag) -> KnowledgeIngestion | None:
+        """Return the ingestion of this version that has not ended, if there is one."""
+        ...
+
+    def find_stalled(self, stalled_since: datetime, limit: int) -> list[KnowledgeIngestion]:
+        """Return ingestions waiting for a worker whose message may have been lost.
+
+        An ingestion counts when it is QUEUED or READING_PAGES, has not changed
+        since `stalled_since`, and all its messages were published before then.
+        EXTRACTING runs are left out: the broker redelivers their unacked message.
+
+        Args:
+            stalled_since: The time before which nothing may have happened.
+            limit: The most ingestions to return, least recently changed first.
+        """
+        ...
+
+    def find_recent(self, limit: int) -> list[KnowledgeIngestionSummary]:
+        """Return up to `limit` ingestions, the most recently created first."""
+        ...
+
+
+class Outbox(Protocol):
+    """Reads and writes the messages waiting to be published to the broker (ADR 0005)."""
+
+    def find_unpublished(self, limit: int) -> list[OutboxMessage]:
+        """Return up to `limit` messages not yet published, oldest first."""
+        ...
+
+    def mark_published(self, outbox_id: str, published_at: datetime) -> None:
+        """Record that the broker has stored the message."""
+        ...
+
+    def add(self, message: OutboxMessage) -> None:
+        """Store a message for an ingestion without changing the ingestion."""
+        ...
+
+    def count_unpublished(self) -> int:
+        """Return how many messages wait for the relay."""
+        ...
+
+
+class IngestionMessagePublisher(Protocol):
+    """Hands ingestion messages to the broker, routed by their lane (ADR 0005)."""
+
+    def publish(self, message: OutboxMessage) -> None:
+        """Publish the message and return once the broker has stored it.
+
+        Raises:
+            MessageBrokerUnavailableError: The broker cannot be reached or did
+                not confirm the message.
+        """
+        ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class IngestionQueueDepth:
+    """How many messages one broker queue of the ingestion workers holds (ADR 0008).
+
+    Attributes:
+        queue: The queue name, such as `ingestion` or `ingestion.dlq`.
+        messages_ready: Messages waiting for a worker.
+        messages_unacked: Messages a worker holds and has not acked yet.
+        consumers: Workers subscribed to the queue.
+    """
+
+    queue: str
+    messages_ready: int
+    messages_unacked: int
+    consumers: int
+
+
+class IngestionQueueMonitor(Protocol):
+    """Reads how full the broker queues of the ingestion workers are (ADR 0008)."""
+
+    def get_queue_depths(self) -> list[IngestionQueueDepth]:
+        """Return the depth of every ingestion queue, in a fixed order.
+
+        A queue the broker does not have yet counts as empty.
+
+        Raises:
+            QueueMonitorUnavailableError: The broker's management API cannot be read.
+        """
+        ...
+
+
 class NodeDirectory(Protocol):
     """Reads the Node registry of Organizational Hierarchy."""
 
     def has_node(self, node_id: NodeIdentifier) -> bool:
         """Return whether a Node with this id is registered."""
+        ...
+
+    def list_node_ids(self) -> list[NodeIdentifier]:
+        """Return the ids of all registered Nodes, sorted."""
         ...
 
 
@@ -64,6 +236,7 @@ class DocumentParser(Protocol):
         Raises:
             DocumentExtractionError: The file cannot be read as its format.
             DocConverterUnavailableError: A DOC file needs LibreOffice, which is missing.
+            DocumentParserModelsUnavailableError: The local layout models are missing.
         """
         ...
 

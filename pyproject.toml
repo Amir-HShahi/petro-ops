@@ -8,13 +8,24 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "pdfplumber>=0.11.10",
+    "alembic>=1.20.1",
+    "docling>=2.146.0",
+    "fastapi>=0.162.0",
+    "pika>=1.4.4",
+    "psycopg-pool>=3.3.3",
+    "psycopg[binary]>=3.3.8",
     "pydantic-settings>=2.16.2",
     "pypdfium2>=5.14.0",
-    "python-docx>=1.2.0",
+    "python-multipart>=0.0.33",
     "pyyaml>=6.0.3",
     "structlog>=26.1.0",
+    "torch>=2.15.0",
+    "torchvision>=0.29.2",
+    "uvicorn>=0.54.0",
 ]
+
+[project.scripts]
+knowledge = "offline_rag.knowledge.interface.cli:run"
 
 [build-system]
 requires = ["uv_build>=0.12.24,<0.13.0"]
@@ -48,9 +59,9 @@ strict = true
 mypy_path = "src"
 packages = ["offline_rag"]
 
-# pypdfium2 ships no type information.
+# pypdfium2 and pika ship no type information.
 [[tool.mypy.overrides]]
-module = ["pypdfium2", "pypdfium2.*"]
+module = ["pypdfium2", "pypdfium2.*", "pika", "pika.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -99,3 +110,14 @@ dev = [
     "ruff>=0.17.3",
     "types-pyyaml>=6.0.12.20261103",
 ]
+
+# CPU-only PyTorch for Docling: the machines have no CUDA GPU to spare, and the
+# CUDA wheels are several GB (ADR 0007).
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }

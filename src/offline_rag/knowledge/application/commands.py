@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 
+from offline_rag.knowledge.application.ports import IngestionLane
 from offline_rag.knowledge.domain.knowledge_scope import KnowledgeScope
 from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
@@ -25,31 +26,102 @@ class SubmitKnowledgeItem:
     content: bytes = field(repr=False)
     scope: KnowledgeScope
     metadata: MetadataRecord = field(default_factory=MetadataRecord)
+    request_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
 class ExtractKnowledgeContent:
-    """Extract the text and structure of one KnowledgeVersion (spec §7.2 steps 3 and 4).
+    """Extract the text and structure of the version an ingestion is for (spec §7.2 steps 3, 4).
 
     Attributes:
-        item_id: The KnowledgeItem.
-        version_tag: The version to extract. Running it again replaces the old result.
+        ingestion_id: The KnowledgeIngestion. Running it again replaces the old result.
+        is_redelivery: Whether the message comes again after a worker stopped or a
+            step failed. Only then may a run that is already EXTRACTING start over;
+            otherwise another worker is still on it.
     """
 
-    item_id: str
-    version_tag: VersionTag
+    ingestion_id: str
+    is_redelivery: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
 class ReadPagesWithLvm:
-    """Read PDF pages without a text layer with the LVM (spec §7.3, ADR 0002).
+    """Read the PDF pages without a text layer with the LVM (spec §7.3, ADR 0002).
 
     Attributes:
-        item_id: The KnowledgeItem.
-        version_tag: The version whose pages are read. It must already be extracted.
+        ingestion_id: The KnowledgeIngestion, which must be waiting for page reading.
         page_numbers: The pages to read. None means every page without a text layer.
     """
 
-    item_id: str
-    version_tag: VersionTag
+    ingestion_id: str
     page_numbers: tuple[int, ...] | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReingestKnowledgeItem:
+    """Run the ingestion of a KnowledgeVersion again, for example after a parser fix.
+
+    Attributes:
+        item_id: The KnowledgeItem.
+        version_tag: The version to ingest. None means the active version.
+        request_id: The request that asked for it, for tracing logs.
+    """
+
+    item_id: str
+    version_tag: VersionTag | None = None
+    request_id: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunIngestionStep:
+    """Run the step a worker message asks for, and decide what happens to the message.
+
+    Attributes:
+        ingestion_id: The KnowledgeIngestion the message is for.
+        lane: The queue the message came from, which names the step.
+        attempt: How many times this step has been tried, counting this one.
+        is_redelivery: Whether the broker delivered the message again because the
+            worker that had it stopped before acking.
+    """
+
+    ingestion_id: str
+    lane: IngestionLane
+    attempt: int = 1
+    is_redelivery: bool = False
+
+
+@dataclass(frozen=True, kw_only=True)
+class PublishOutboxMessages:
+    """Publish the outbox messages the broker does not have yet, oldest first (ADR 0005).
+
+    Attributes:
+        max_messages: The most messages one pass publishes.
+    """
+
+    max_messages: int = 100
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReconcileKnowledgeIngestions:
+    """Send a new message for ingestions that stopped because their message was lost (ADR 0005).
+
+    Attributes:
+        max_ingestions: The most ingestions one pass sends a message for.
+    """
+
+    max_ingestions: int = 100
+
+
+@dataclass(frozen=True, kw_only=True)
+class FailKnowledgeIngestion:
+    """End an ingestion whose step kept failing (ADR 0005, `WORKER_MAX_ATTEMPTS`).
+
+    Attributes:
+        ingestion_id: The KnowledgeIngestion.
+        failure_code: The code of the last error.
+        failure_detail: A short description of the last error.
+    """
+
+    ingestion_id: str
+    failure_code: str
+    failure_detail: str

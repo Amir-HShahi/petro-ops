@@ -33,7 +33,7 @@ Context folders are empty until their first use case; the `new-bounded-context` 
 
 ## Stack
 - Python 3.12, `uv`, `ruff`, `mypy --strict`, `pytest`, `import-linter`.
-- Fully offline: never add cloud SDKs, API calls, or network access at runtime or in tests.
+- Fully offline: never add cloud SDKs or remote API calls. Runtime sockets go only to loopback services (Ollama, Postgres, RabbitMQ, the API), enforced in `Settings` (ADR 0005).
 
 ## Architecture (DDD + hexagonal)
 - Code lives in `src/offline_rag/<bounded_context>/` with layers: `domain/` → `application/` → `infrastructure/` → `interface/`.

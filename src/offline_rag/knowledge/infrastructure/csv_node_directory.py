@@ -29,9 +29,21 @@ class CsvNodeDirectory:
             NodeRegistryUnavailableError: The file is missing, has no `node_id` column
                 or lists an invalid Node id.
         """
+        return node_id in self._registered_node_ids()
+
+    def list_node_ids(self) -> list[NodeIdentifier]:
+        """Return every Node id in the registry, sorted.
+
+        Raises:
+            NodeRegistryUnavailableError: The file is missing, has no `node_id` column
+                or lists an invalid Node id.
+        """
+        return sorted(self._registered_node_ids(), key=lambda node_id: node_id.value)
+
+    def _registered_node_ids(self) -> frozenset[NodeIdentifier]:
         if self._node_ids is None:
             self._node_ids = self._read_node_ids()
-        return node_id in self._node_ids
+        return self._node_ids
 
     def _read_node_ids(self) -> frozenset[NodeIdentifier]:
         try:
