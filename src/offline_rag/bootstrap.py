@@ -83,6 +83,16 @@ from offline_rag.knowledge.infrastructure.rabbitmq_management_queue_monitor impo
 )
 from offline_rag.knowledge.infrastructure.system_clock import SystemClock
 from offline_rag.knowledge.infrastructure.uuid_id_generator import UuidIdGenerator
+from offline_rag.organization.application.register_node import RegisterNodeHandler
+from offline_rag.organization.infrastructure.postgres_database import (
+    PostgresDatabase as OrganizationDatabase,
+)
+from offline_rag.organization.infrastructure.postgres_layer_repository import (
+    PostgresLayerRepository,
+)
+from offline_rag.organization.infrastructure.postgres_node_repository import (
+    PostgresNodeRepository,
+)
 from offline_rag.settings import Settings
 
 SOURCE_FILES_DIR_NAME = "source_files"
@@ -110,6 +120,18 @@ class KnowledgeWiring:
     def close(self) -> None:
         """Close the database pool and the broker connection."""
         self.message_publisher.close()
+        self.database.close()
+
+
+@dataclass(frozen=True, kw_only=True)
+class OrganizationWiring:
+    """The Organizational Hierarchy use cases and the connection they share."""
+
+    register_node_handler: RegisterNodeHandler
+    database: OrganizationDatabase
+
+    def close(self) -> None:
+        """Close the database pool."""
         self.database.close()
 
 
@@ -293,6 +315,24 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
         ingestion_repository=ingestion_repository,
         database=database,
         message_publisher=message_publisher,
+    )
+
+
+def build_organization(settings: Settings) -> OrganizationWiring:
+    """Return Organizational Hierarchy on Postgres (ADR 0004)."""
+    database = OrganizationDatabase(
+        settings.database_url,
+        pool_size=settings.database_pool_size,
+        connect_timeout_s=settings.database_connect_timeout_s,
+    )
+    return OrganizationWiring(
+        register_node_handler=RegisterNodeHandler(
+            node_repository=PostgresNodeRepository(database),
+            layer_repository=PostgresLayerRepository(database),
+            clock=SystemClock(),
+            event_publisher=InProcessEventPublisher(),
+        ),
+        database=database,
     )
 
 

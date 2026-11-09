@@ -66,6 +66,13 @@ Add a row in the same PR that adds the code.
 | `ORGANIZATION_TOP_LAYER_NODE_HAS_PARENT` | Domain | A Layer 0 Node was given a parent, but Layer 0 is the top. | Remove the parent, or put the Node in a lower Layer. |
 | `ORGANIZATION_PARENT_NOT_IN_HIGHER_LAYER` | Domain | A parent Node is in the same Layer as its child or a lower one. | Pick a parent in a higher Layer (a lower number). |
 | `ORGANIZATION_PARENT_STRUCTURE_NOT_TRACKED` | Domain | A Node was placed under a parent whose internal structure is not tracked, so it cannot have children. | Turn on tracking for the parent, or pick another parent. |
+| `ORGANIZATION_NODE_NOT_FOUND` | Not found | No Node has the requested id, for example the parent given for a new Node. | Check the id, or register that Node first. |
+| `ORGANIZATION_LAYER_NOT_FOUND` | Not found | A Layer is missing from the database, so the five Layers were not loaded. | Run `uv run alembic upgrade head`. |
+| `ORGANIZATION_NODE_ALREADY_REGISTERED` | Domain | A Node with the same id is already registered. | Pick another id. |
+| `ORGANIZATION_TOP_LAYER_NODE_ALREADY_REGISTERED` | Domain | A second Node was sent to Layer 0, which holds one Node at the top. | Register the Node in a lower Layer under an existing Node. |
+| `ORGANIZATION_STORAGE_FAILED` | Infrastructure | The local database of Nodes and Layers cannot be read or written, or a new Node's id is already taken. | Check that Postgres is running and the migrations have run, then try again. |
+| `ORGANIZATION_NODE_REGISTRY_FILE_NOT_READABLE` | Not found | The Node registry CSV to import does not exist or cannot be read. | Check the path given to `organization import-nodes --file`, or `NODE_REGISTRY_PATH`. |
+| `ORGANIZATION_NODE_REGISTRY_FILE_INVALID` | Domain | A row of the Node registry CSV is missing a column or has a value it cannot hold. `details` names the row and column. | Fix that row as described in `fixtures/registry/README.md`. |
 | `KNOWLEDGE_EMPTY_FILE` | Domain | A submitted file has no content. | Submit the file again with its content. |
 | `KNOWLEDGE_UNSUPPORTED_FORMAT` | Domain | A submitted file is not DOC, DOCX or PDF. The format is read from the file content, not its name. | Convert the file to DOC, DOCX or PDF. |
 | `KNOWLEDGE_INVALID_VERSION_HISTORY` | Unexpected | A KnowledgeItem was built with versions that break the version rules. This is a bug or corrupted storage. | Report it with the `request_id`. |
