@@ -88,7 +88,7 @@ root_package = "offline_rag"
 [[tool.importlinter.contracts]]
 name = "Hexagonal layers in each bounded context"
 type = "layers"
-containers = ["offline_rag.knowledge"]
+containers = ["offline_rag.knowledge", "offline_rag.organization"]
 layers = ["interface", "infrastructure", "application", "domain"]
 
 [tool.commitizen]

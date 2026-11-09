@@ -1,15 +1,12 @@
 """Who may see a KnowledgeItem and what it may be used for."""
 
 from dataclasses import dataclass
-from enum import StrEnum
 
+from offline_rag.shared_kernel.confidentiality_level import ConfidentialityLevel
 
-class ConfidentialityLevel(StrEnum):
-    """Visibility limit of knowledge, as used in the Node registry (spec §6.1, §7.5)."""
-
-    PUBLIC = "public"
-    INTERNAL = "internal"
-    CONFIDENTIAL = "confidential"
+# Organizational Hierarchy uses the same levels for Nodes, so the enum lives in the
+# shared kernel. It is re-exported here so existing imports keep working.
+__all__ = ["ConfidentialityLevel", "KnowledgeScope"]
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

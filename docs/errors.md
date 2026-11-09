@@ -60,6 +60,12 @@ Add a row in the same PR that adds the code.
 | Code | Category | Meaning | How to fix |
 |---|---|---|---|
 | `ORGANIZATION_INVALID_NODE_IDENTIFIER` | Domain | A Node id is empty or starts or ends with a space. | Send the Node id exactly as it is in the registry. |
+| `ORGANIZATION_INVALID_LAYER_INDEX` | Domain | A Layer index is not a whole number from 0 to 4. | Use a Layer from 0 (strategic) to 4 (knowledge sources). |
+| `ORGANIZATION_INVALID_LAYER_DETAIL_LEVEL` | Domain | Layer 4 was given a detail level, or Layers 0 to 3 were given none. | Leave the detail level empty for Layer 4 and set one for every other Layer. |
+| `ORGANIZATION_PARENT_NODE_REQUIRED` | Domain | A Node below Layer 0 has no parent Node. | Give the parent Node it reports to. |
+| `ORGANIZATION_TOP_LAYER_NODE_HAS_PARENT` | Domain | A Layer 0 Node was given a parent, but Layer 0 is the top. | Remove the parent, or put the Node in a lower Layer. |
+| `ORGANIZATION_PARENT_NOT_IN_HIGHER_LAYER` | Domain | A parent Node is in the same Layer as its child or a lower one. | Pick a parent in a higher Layer (a lower number). |
+| `ORGANIZATION_PARENT_STRUCTURE_NOT_TRACKED` | Domain | A Node was placed under a parent whose internal structure is not tracked, so it cannot have children. | Turn on tracking for the parent, or pick another parent. |
 | `KNOWLEDGE_EMPTY_FILE` | Domain | A submitted file has no content. | Submit the file again with its content. |
 | `KNOWLEDGE_UNSUPPORTED_FORMAT` | Domain | A submitted file is not DOC, DOCX or PDF. The format is read from the file content, not its name. | Convert the file to DOC, DOCX or PDF. |
 | `KNOWLEDGE_INVALID_VERSION_HISTORY` | Unexpected | A KnowledgeItem was built with versions that break the version rules. This is a bug or corrupted storage. | Report it with the `request_id`. |

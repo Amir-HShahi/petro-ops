@@ -104,3 +104,16 @@ class InvalidNodeIdentifierError(DomainError):
             "A Node id must not be empty or start or end with a space.",
             details={"value": value},
         )
+
+
+class InvalidLayerIndexError(DomainError):
+    """A Layer index is not a whole number from 0 to 4 (spec §6.2)."""
+
+    code = "ORGANIZATION_INVALID_LAYER_INDEX"
+
+    def __init__(self, value: object) -> None:
+        """Create the error for the rejected index."""
+        super().__init__(
+            "A Layer index must be a whole number from 0 (strategic) to 4 (knowledge sources).",
+            details={"value": value},
+        )
