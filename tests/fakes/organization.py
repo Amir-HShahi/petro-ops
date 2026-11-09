@@ -73,3 +73,6 @@ class InMemoryLayerRepository:
 
     def find_all(self) -> list[Layer]:
         return sorted(self.layers.values(), key=lambda layer: layer.layer_index.value)
+
+    def save(self, layer: Layer) -> None:
+        self.layers[layer.layer_index] = layer

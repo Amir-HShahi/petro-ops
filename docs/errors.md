@@ -73,6 +73,11 @@ Add a row in the same PR that adds the code.
 | `ORGANIZATION_STORAGE_FAILED` | Infrastructure | The local database of Nodes and Layers cannot be read or written, or a new Node's id is already taken. | Check that Postgres is running and the migrations have run, then try again. |
 | `ORGANIZATION_NODE_REGISTRY_FILE_NOT_READABLE` | Not found | The Node registry CSV to import does not exist or cannot be read. | Check the path given to `organization import-nodes --file`, or `NODE_REGISTRY_PATH`. |
 | `ORGANIZATION_NODE_REGISTRY_FILE_INVALID` | Domain | A row of the Node registry CSV is missing a column or has a value it cannot hold. `details` names the row and column. | Fix that row as described in `fixtures/registry/README.md`. |
+| `ORGANIZATION_LAYER_RECEIVES_NO_PACKAGE` | Domain | Transfer rules were defined for Layer 4, which only provides knowledge. | Define transfer rules for Layers 0 to 3 only. |
+| `ORGANIZATION_TRANSFER_TOPIC_REQUIRED_AND_EXCLUDED` | Domain | A topic is both required and excluded in a Layer's transfer rules. `details.topics` lists them. | Keep each topic in one list only. |
+| `ORGANIZATION_TRANSFER_RULE_FIELD_EMPTY` | Domain | A topic, the output format or the source reference level of a transfer rule is blank. `details.field` names it. | Fill in that field. |
+| `ORGANIZATION_INVALID_PACKAGE_LENGTH` | Domain | The maximum TransferPackage length is not a whole number of tokens above 0. | Give a positive number of tokens. |
+| `EVALUATION_INVALID_JUDGE_THRESHOLD` | Domain | A judge threshold is not a whole number of points from 1 to 20. | Give a score from 1 to 20, such as 18. |
 | `KNOWLEDGE_EMPTY_FILE` | Domain | A submitted file has no content. | Submit the file again with its content. |
 | `KNOWLEDGE_UNSUPPORTED_FORMAT` | Domain | A submitted file is not DOC, DOCX or PDF. The format is read from the file content, not its name. | Convert the file to DOC, DOCX or PDF. |
 | `KNOWLEDGE_INVALID_VERSION_HISTORY` | Unexpected | A KnowledgeItem was built with versions that break the version rules. This is a bug or corrupted storage. | Report it with the `request_id`. |

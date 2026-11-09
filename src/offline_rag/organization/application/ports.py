@@ -50,6 +50,10 @@ class LayerRepository(Protocol):
         """Return every Layer, from Layer 0 down."""
         ...
 
+    def save(self, layer: Layer) -> None:
+        """Store the changed detail level and transfer rules of a Layer."""
+        ...
+
 
 class Clock(Protocol):
     """Tells the current time."""

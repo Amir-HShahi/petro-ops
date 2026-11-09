@@ -117,3 +117,16 @@ class InvalidLayerIndexError(DomainError):
             "A Layer index must be a whole number from 0 (strategic) to 4 (knowledge sources).",
             details={"value": value},
         )
+
+
+class InvalidJudgeThresholdError(DomainError):
+    """A judge threshold is not a whole number of points from 1 to 20 (spec §16.1)."""
+
+    code = "EVALUATION_INVALID_JUDGE_THRESHOLD"
+
+    def __init__(self, value: object) -> None:
+        """Create the error for the rejected threshold."""
+        super().__init__(
+            "A judge threshold must be a whole number of points from 1 to 20, such as 18.",
+            details={"value": value},
+        )

@@ -5,12 +5,26 @@ from typing import Any
 from offline_rag.organization.application.errors import LayerNotFoundError
 from offline_rag.organization.domain.layer import Layer
 from offline_rag.organization.domain.transfer_detail_level import TransferDetailLevel
+from offline_rag.organization.domain.transfer_rule import TransferRule
 from offline_rag.organization.infrastructure.postgres_database import PostgresDatabase
+from offline_rag.shared_kernel.judge_threshold import JudgeThreshold
 from offline_rag.shared_kernel.layer_index import LayerIndex
+
+_UPDATE_LAYER = """
+UPDATE layer SET
+    received_detail_level = %s,
+    required_topics = %s,
+    excluded_topics = %s,
+    output_format = %s,
+    min_judge_score_points = %s,
+    max_package_length_tokens = %s,
+    source_reference_level = %s
+WHERE layer_index = %s
+"""
 
 
 class PostgresLayerRepository:
-    """Reads the Layers from the `layer` table."""
+    """Reads and updates the Layers in the `layer` table, one row per Layer."""
 
     def __init__(self, database: PostgresDatabase) -> None:
         self._database = database
@@ -40,6 +54,32 @@ class PostgresLayerRepository:
             rows = connection.execute("SELECT * FROM layer ORDER BY layer_index").fetchall()
         return [_layer_from_row(row) for row in rows]
 
+    def save(self, layer: Layer) -> None:
+        """Store the detail level and transfer rules of an existing Layer.
+
+        Raises:
+            LayerNotFoundError: The Layer is not in the table.
+            OrganizationStorageError: The database cannot be written.
+        """
+        rule = layer.transfer_rule
+        detail_level = layer.received_detail_level
+        with self._database.transaction("save_layer") as connection:
+            updated = connection.execute(
+                _UPDATE_LAYER,
+                (
+                    detail_level.value if detail_level else None,
+                    list(rule.required_topics) if rule else None,
+                    list(rule.excluded_topics) if rule else None,
+                    rule.output_format if rule else None,
+                    rule.min_judge_score.points if rule else None,
+                    rule.max_package_length_tokens if rule else None,
+                    rule.source_reference_level if rule else None,
+                    layer.layer_index.value,
+                ),
+            ).rowcount
+        if updated == 0:
+            raise LayerNotFoundError(layer.layer_index.value)
+
 
 def _layer_from_row(row: dict[str, Any]) -> Layer:
     detail_level = row["received_detail_level"]
@@ -48,4 +88,18 @@ def _layer_from_row(row: dict[str, Any]) -> Layer:
         name=row["name"],
         role=row["role"],
         received_detail_level=TransferDetailLevel(detail_level) if detail_level else None,
+        transfer_rule=_transfer_rule_from_row(row),
+    )
+
+
+def _transfer_rule_from_row(row: dict[str, Any]) -> TransferRule | None:
+    if row["output_format"] is None:
+        return None
+    return TransferRule(
+        required_topics=tuple(row["required_topics"]),
+        excluded_topics=tuple(row["excluded_topics"]),
+        output_format=row["output_format"],
+        min_judge_score=JudgeThreshold(row["min_judge_score_points"]),
+        max_package_length_tokens=row["max_package_length_tokens"],
+        source_reference_level=row["source_reference_level"],
     )

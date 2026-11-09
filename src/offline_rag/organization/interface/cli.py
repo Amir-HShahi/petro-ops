@@ -22,13 +22,19 @@ from offline_rag.knowledge.interface.problem_details import (
     problem_for_unexpected_error,
     problem_from_error,
 )
-from offline_rag.organization.application.commands import RegisterNode
+from offline_rag.organization.application.commands import DefineTransferRule, RegisterNode
 from offline_rag.organization.application.errors import NodeAlreadyRegisteredError
+from offline_rag.organization.domain.layer import Layer
 from offline_rag.organization.domain.node import Node
+from offline_rag.organization.domain.transfer_detail_level import TransferDetailLevel
 from offline_rag.organization.interface.node_registry_file import read_node_registry
 from offline_rag.settings import Settings
 from offline_rag.shared_kernel.confidentiality_level import ConfidentialityLevel
 from offline_rag.shared_kernel.errors import ProjectError
+from offline_rag.shared_kernel.judge_threshold import (
+    DEFAULT_JUDGE_THRESHOLD_POINTS,
+    JudgeThreshold,
+)
 from offline_rag.shared_kernel.layer_index import LayerIndex
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
 
@@ -70,6 +76,30 @@ def build_parser() -> argparse.ArgumentParser:
     import_nodes.add_argument(
         "--file", type=Path, help="Default: NODE_REGISTRY_PATH, the case-study registry."
     )
+
+    define_rule = commands.add_parser(
+        "define-transfer-rule",
+        help="Set what a Layer requires of the TransferPackages it receives (spec §10.1).",
+    )
+    define_rule.add_argument("layer", type=int, help="The receiving Layer, 0 to 3.")
+    define_rule.add_argument(
+        "--detail-level", required=True, choices=[level.value for level in TransferDetailLevel]
+    )
+    define_rule.add_argument(
+        "--required-topic", action="append", default=[], help="Repeat for more topics."
+    )
+    define_rule.add_argument(
+        "--excluded-topic", action="append", default=[], help="Repeat for more topics."
+    )
+    define_rule.add_argument("--output-format", required=True, help="Such as markdown.")
+    define_rule.add_argument(
+        "--min-judge-score",
+        type=int,
+        default=DEFAULT_JUDGE_THRESHOLD_POINTS,
+        help="Points out of 20. Default: %(default)s.",
+    )
+    define_rule.add_argument("--max-package-length-tokens", type=int, required=True)
+    define_rule.add_argument("--source-reference-level", required=True, help="Such as page.")
     return parser
 
 
@@ -83,6 +113,7 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
     commands: dict[str, Command] = {
         "register-node": _register_node,
         "import-nodes": _import_nodes,
+        "define-transfer-rule": _define_transfer_rule,
     }
 
     organization: OrganizationWiring | None = None
@@ -125,6 +156,28 @@ def node_body(node: Node) -> dict[str, Any]:
     }
 
 
+def layer_body(layer: Layer) -> dict[str, Any]:
+    """Return the JSON body that describes a Layer and its transfer rules."""
+    rule = layer.transfer_rule
+    detail_level = layer.received_detail_level
+    return {
+        "layer_index": layer.layer_index.value,
+        "name": layer.name,
+        "role": layer.role,
+        "received_detail_level": detail_level.value if detail_level else None,
+        "transfer_rule": None
+        if rule is None
+        else {
+            "required_topics": list(rule.required_topics),
+            "excluded_topics": list(rule.excluded_topics),
+            "output_format": rule.output_format,
+            "min_judge_score": rule.min_judge_score.points,
+            "max_package_length_tokens": rule.max_package_length_tokens,
+            "source_reference_level": rule.source_reference_level,
+        },
+    }
+
+
 def _register_node(
     arguments: argparse.Namespace, organization: OrganizationWiring, settings: Settings
 ) -> dict[str, Any]:
@@ -158,6 +211,24 @@ def _import_nodes(
             continue
         registered.append(command.node_id.value)
     return {"registered": registered, "already_registered": already_registered}
+
+
+def _define_transfer_rule(
+    arguments: argparse.Namespace, organization: OrganizationWiring, settings: Settings
+) -> dict[str, Any]:
+    layer = organization.define_transfer_rule_handler.define(
+        DefineTransferRule(
+            layer_index=LayerIndex(arguments.layer),
+            received_detail_level=TransferDetailLevel(arguments.detail_level),
+            required_topics=tuple(arguments.required_topic),
+            excluded_topics=tuple(arguments.excluded_topic),
+            output_format=arguments.output_format,
+            min_judge_score=JudgeThreshold(arguments.min_judge_score),
+            max_package_length_tokens=arguments.max_package_length_tokens,
+            source_reference_level=arguments.source_reference_level,
+        )
+    )
+    return layer_body(layer)
 
 
 def _write_json(stream: TextIO, body: Mapping[str, object]) -> None:

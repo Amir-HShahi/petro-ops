@@ -91,3 +91,56 @@ class ParentStructureNotTrackedError(DomainError):
             "cannot be registered under it. Turn on tracking for the parent first.",
             details={"node_id": node_id, "parent_node_id": parent_node_id},
         )
+
+
+class LayerReceivesNoTransferPackageError(DomainError):
+    """Transfer rules were defined for Layer 4, which only provides knowledge."""
+
+    code = "ORGANIZATION_LAYER_RECEIVES_NO_PACKAGE"
+
+    def __init__(self, layer_index: int) -> None:
+        """Create the error for the Layer that receives nothing."""
+        super().__init__(
+            f"Layer {layer_index} only provides knowledge and receives no TransferPackage, "
+            "so it has no transfer rules. Define them for Layers 0 to 3.",
+            details={"layer_index": layer_index},
+        )
+
+
+class TransferTopicRequiredAndExcludedError(DomainError):
+    """A topic is both required and excluded in the transfer rules of a Layer."""
+
+    code = "ORGANIZATION_TRANSFER_TOPIC_REQUIRED_AND_EXCLUDED"
+
+    def __init__(self, topics: list[str]) -> None:
+        """Create the error for the topics in both lists."""
+        super().__init__(
+            "A topic cannot be both required and excluded: " + ", ".join(topics) + ".",
+            details={"topics": topics},
+        )
+
+
+class EmptyTransferRuleFieldError(DomainError):
+    """A topic, the output format or the source reference level of a transfer rule is blank."""
+
+    code = "ORGANIZATION_TRANSFER_RULE_FIELD_EMPTY"
+
+    def __init__(self, field_name: str) -> None:
+        """Create the error for the blank field."""
+        super().__init__(
+            f"The transfer rule field '{field_name}' must not be blank.",
+            details={"field": field_name},
+        )
+
+
+class InvalidPackageLengthError(DomainError):
+    """The maximum TransferPackage length is not a positive number of tokens."""
+
+    code = "ORGANIZATION_INVALID_PACKAGE_LENGTH"
+
+    def __init__(self, value: object) -> None:
+        """Create the error for the rejected length."""
+        super().__init__(
+            "The maximum package length must be a whole number of tokens above 0.",
+            details={"value": value},
+        )

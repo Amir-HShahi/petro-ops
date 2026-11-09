@@ -83,6 +83,7 @@ from offline_rag.knowledge.infrastructure.rabbitmq_management_queue_monitor impo
 )
 from offline_rag.knowledge.infrastructure.system_clock import SystemClock
 from offline_rag.knowledge.infrastructure.uuid_id_generator import UuidIdGenerator
+from offline_rag.organization.application.define_transfer_rule import DefineTransferRuleHandler
 from offline_rag.organization.application.register_node import RegisterNodeHandler
 from offline_rag.organization.infrastructure.postgres_database import (
     PostgresDatabase as OrganizationDatabase,
@@ -128,6 +129,7 @@ class OrganizationWiring:
     """The Organizational Hierarchy use cases and the connection they share."""
 
     register_node_handler: RegisterNodeHandler
+    define_transfer_rule_handler: DefineTransferRuleHandler
     database: OrganizationDatabase
 
     def close(self) -> None:
@@ -325,12 +327,20 @@ def build_organization(settings: Settings) -> OrganizationWiring:
         pool_size=settings.database_pool_size,
         connect_timeout_s=settings.database_connect_timeout_s,
     )
+    layer_repository = PostgresLayerRepository(database)
+    clock = SystemClock()
+    event_publisher = InProcessEventPublisher()
     return OrganizationWiring(
         register_node_handler=RegisterNodeHandler(
             node_repository=PostgresNodeRepository(database),
-            layer_repository=PostgresLayerRepository(database),
-            clock=SystemClock(),
-            event_publisher=InProcessEventPublisher(),
+            layer_repository=layer_repository,
+            clock=clock,
+            event_publisher=event_publisher,
+        ),
+        define_transfer_rule_handler=DefineTransferRuleHandler(
+            layer_repository=layer_repository,
+            clock=clock,
+            event_publisher=event_publisher,
         ),
         database=database,
     )

@@ -12,6 +12,7 @@ from offline_rag.organization.application.errors import (
 from offline_rag.organization.application.register_node import RegisterNodeHandler
 from offline_rag.organization.domain.node import Node
 from offline_rag.organization.domain.transfer_detail_level import TransferDetailLevel
+from offline_rag.organization.domain.transfer_rule import TransferRule
 from offline_rag.organization.infrastructure.errors import OrganizationStorageError
 from offline_rag.organization.infrastructure.postgres_database import PostgresDatabase
 from offline_rag.organization.infrastructure.postgres_layer_repository import (
@@ -24,6 +25,7 @@ from offline_rag.organization.interface import cli
 from offline_rag.organization.interface.node_registry_file import read_node_registry
 from offline_rag.settings import Settings
 from offline_rag.shared_kernel.confidentiality_level import ConfidentialityLevel
+from offline_rag.shared_kernel.judge_threshold import JudgeThreshold
 from offline_rag.shared_kernel.layer_index import LayerIndex
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
 
@@ -190,3 +192,71 @@ def test_cli_reports_problem_details_when_parent_is_unknown(
     assert exit_code == cli.EXIT_FAILED
     assert problem["type"] == "ORGANIZATION_NODE_NOT_FOUND"
     assert problem["status"] == 404
+
+
+def test_transfer_rule_round_trips_when_saved(database: PostgresDatabase):
+    repository = PostgresLayerRepository(database)
+    layer = repository.get_by_index(LayerIndex(1))
+    rule = TransferRule(
+        required_topics=("key risks", "achievements"),
+        excluded_topics=("shift rosters",),
+        output_format="markdown",
+        min_judge_score=JudgeThreshold(18),
+        max_package_length_tokens=1500,
+        source_reference_level="document",
+    )
+    layer.define_transfer_rule(
+        received_detail_level=TransferDetailLevel.TOP_EXECUTIVE,
+        transfer_rule=rule,
+        defined_at=FakeClock().now(),
+    )
+
+    repository.save(layer)
+
+    loaded = repository.get_by_index(LayerIndex(1))
+    assert loaded.transfer_rule == rule
+    assert loaded.received_detail_level == TransferDetailLevel.TOP_EXECUTIVE
+    assert repository.get_by_index(LayerIndex(2)).transfer_rule is None
+
+
+def test_database_refuses_a_partial_transfer_rule_when_written_directly(
+    database: PostgresDatabase,
+):
+    with pytest.raises(OrganizationStorageError), database.transaction("test") as connection:
+        connection.execute("UPDATE layer SET output_format = 'markdown' WHERE layer_index = 1")
+
+
+def test_cli_defines_a_transfer_rule_when_run(
+    postgres_url: str, capsys: pytest.CaptureFixture[str]
+):
+    settings = Settings(database_url=postgres_url)
+
+    exit_code = cli.main(
+        [
+            "define-transfer-rule",
+            "2",
+            "--detail-level",
+            "technical_summary",
+            "--required-topic",
+            "key risks",
+            "--output-format",
+            "markdown",
+            "--max-package-length-tokens",
+            "2000",
+            "--source-reference-level",
+            "page",
+        ],
+        settings=settings,
+    )
+
+    body = json.loads(capsys.readouterr().out)
+    assert exit_code == cli.EXIT_OK
+    assert body["layer_index"] == 2
+    assert body["transfer_rule"] == {
+        "required_topics": ["key risks"],
+        "excluded_topics": [],
+        "output_format": "markdown",
+        "min_judge_score": 18,
+        "max_package_length_tokens": 2000,
+        "source_reference_level": "page",
+    }
