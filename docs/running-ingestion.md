@@ -30,9 +30,10 @@ Open <http://127.0.0.1:8000/pipeline>, pick a file and a Node, and submit. Press
 | Outbox relay | `uv run knowledge relay run` | exactly 1 |
 | Text worker | `uv run knowledge worker run --lane text` | 1 or more |
 | Vision worker | `uv run knowledge worker run --lane vision` | exactly 1 (one model in memory) |
+| Chunking worker | `uv run knowledge worker run --lane chunking` | 1 or more |
 | API | `uv run knowledge api run` | 1, optional |
 
-`submit` stores the file and queues an ingestion. The relay sends it to a text worker, which extracts the text with Docling. If some PDF pages have no text layer, the vision worker reads them with Gemma and `glm-ocr`. Nothing is extracted until the relay and a text worker run.
+`submit` stores the file and queues an ingestion. The relay sends it to a text worker, which extracts the text with Docling. If some PDF pages have no text layer, the vision worker reads them with Gemma and `glm-ocr`. Then the chunking worker cuts the content into chunks (ADR 0009) and checks it for duplicates within the same Node (ADR 0010); only then is the ingestion `completed`. Nothing is extracted until the relay and a text worker run.
 
 ## One-time setup
 
@@ -91,7 +92,7 @@ uv run alembic upgrade head
 docker/pipeline-up.sh
 ```
 
-It starts Postgres and RabbitMQ, applies the vision-queue policy, creates the tables, then starts the relay, one text worker, the vision worker and the API. It prints the pipeline page URL, and each process logs to `data/logs/<name>.log`. Ctrl+C stops the processes; the containers keep running.
+It starts Postgres and RabbitMQ, applies the vision-queue policy, creates the tables, then starts the relay, one text worker, the vision worker, the chunking worker and the API. It prints the pipeline page URL, and each process logs to `data/logs/<name>.log`. Ctrl+C stops the processes; the containers keep running.
 
 | Option | Effect |
 |---|---|
@@ -110,6 +111,7 @@ Run each in its own terminal and stop them with Ctrl+C. A worker acks a message 
 uv run knowledge relay run
 uv run knowledge worker run --lane text
 uv run knowledge worker run --lane vision   # needs Ollama running
+uv run knowledge worker run --lane chunking
 uv run knowledge api run                    # http://127.0.0.1:8000, docs at /docs
 ```
 
@@ -120,8 +122,8 @@ Log lines are JSON on stderr.
 Open <http://127.0.0.1:8000/pipeline> while the API runs. The page needs no internet. It shows:
 
 - a form to submit a file for a registered Node;
-- the outbox and the four queues (`ingestion`, `ingestion.vision`, `ingestion.retry`, `ingestion.dlq`), each with messages waiting (blue squares), messages a worker holds and has not acked (amber squares) and consumers;
-- the 20 most recent ingestions as cards in the column of their status. Click a completed card to see its blocks, with the page or heading path, table or text, and the review flag.
+- the outbox and the five queues (`ingestion`, `ingestion.vision`, `ingestion.chunking`, `ingestion.retry`, `ingestion.dlq`), each with messages waiting (blue squares), messages a worker holds and has not acked (amber squares) and consumers;
+- the 20 most recent ingestions as cards in the column of their status (Queued, Extracting, Reading pages, Chunking, Completed, Failed), with their chunk count and duplicate flag count. Click a completed card to see its duplicate flags and its blocks, with the page or heading path, table or text, and the review flag.
 
 The page polls every second. If RabbitMQ's management API is down, the queue panel shows `KNOWLEDGE_QUEUE_MONITOR_UNAVAILABLE` and the cards keep updating.
 
@@ -146,9 +148,10 @@ printf 'PK\003\004this is not a real docx' > /tmp/broken_report.docx
    - `fixtures/docs/synthetic/project_report_sp12_riser_r3_integrity.pdf` (`project_report`)
 
    Each card appears under Queued. The outbox count goes up, then the relay moves each message to `ingestion`, which shows 3 waiting. Point out that the files are safe in Postgres and the broker even though no worker runs.
-2. **Queue drains (30 s).** In terminal 2, run `uv run knowledge worker run --lane text`. `ingestion` shows 1 consumer and 1 in progress. The cards move to Extracting and then Completed one by one, and the queue drains to 0. Click a completed card to show its blocks: headings for the DOCX files, page numbers and tables for the PDF.
-3. **Vision lane (about a minute per page).** Submit `fixtures/docs/cases/scanned_sp12_riser_r3_baseline_2021.pdf` (`inspection_report`). The text worker finds pages without a text layer, so the card moves Extracting → Reading pages and one message appears in `ingestion.vision`, held by its single consumer. When Gemma and `glm-ocr` are done, the card is Completed with its `blocks_for_review`. Click it: the blocks read by the LVM carry an LVM badge, and tables the two models read differently are flagged for review.
-4. **A file that fails (10 s).** Submit `/tmp/broken_report.docx`. The card moves to Failed with `KNOWLEDGE_EXTRACTION_FAILED` after one attempt. A broken file is a domain error, so it is not retried and nothing lands in `ingestion.retry` or `ingestion.dlq`. A file in another format, such as a `.txt`, is refused by the form itself with `KNOWLEDGE_UNSUPPORTED_FORMAT` and never becomes a card.
+2. **Queue drains (30 s).** In terminal 2, run `uv run knowledge worker run --lane text`. `ingestion` shows 1 consumer and 1 in progress. The cards move to Extracting, Chunking and then Completed one by one, and the queue drains to 0. Click a completed card to show its blocks: headings for the DOCX files, page numbers and tables for the PDF.
+3. **Vision lane (about a minute per page).** Submit `fixtures/docs/cases/scanned_sp12_riser_r3_baseline_2021.pdf` (`inspection_report`). The text worker finds pages without a text layer, so the card moves Extracting → Reading pages and one message appears in `ingestion.vision`, held by its single consumer. When Gemma and `glm-ocr` are done, the card passes Chunking and is Completed with its `blocks_for_review`. Click it: the blocks read by the LVM carry an LVM badge, and tables the two models read differently are flagged for review.
+4. **Duplicates (20 s).** Submit `fixtures/docs/cases/cv_moradi_final.docx` after `fixtures/docs/synthetic/profile_leila_moradi.docx`, both for `sp12_inspection_team`. The second card shows `1 duplicate flag` as soon as it is submitted; open it when completed to see `exact` and the first item's id. Both items are kept. The same works for overlap: `synthetic/inspection_sp12_riser_r3_2026_v1.docx` then `cases/shift_report_sp12_2026_09_27.docx`, both for one Node, gives an `overlap` flag.
+5. **A file that fails (10 s).** Submit `/tmp/broken_report.docx`. The card moves to Failed with `KNOWLEDGE_EXTRACTION_FAILED` after one attempt. A broken file is a domain error, so it is not retried and nothing lands in `ingestion.retry` or `ingestion.dlq`. A file in another format, such as a `.txt`, is refused by the form itself with `KNOWLEDGE_UNSUPPORTED_FORMAT` and never becomes a card.
 
 ## Use it from the CLI
 
@@ -161,10 +164,13 @@ uv run knowledge submit fixtures/docs/synthetic/inspection_sp12_riser_r3_2024.do
 
 uv run knowledge status INGESTION_ID
 uv run knowledge show-content ITEM_ID --limit 5
+uv run knowledge show-chunks ITEM_ID --limit 5
 uv run knowledge reingest ITEM_ID              # again, for example after a parser fix
+uv run knowledge publish-version ITEM_ID fixtures/docs/cases/inspection_sp12_riser_r3_2026_v2.docx \
+  --change-reason "Adds 3 readings and a change note."
 ```
 
-`show-content` and `reingest` use the active version unless `--version TAG` is given.
+`status` lists the duplicate flags of the version and its chunk count. `show-content`, `show-chunks` and `reingest` use the active version unless `--version TAG` is given. `show-chunks` also says whether the chunks are retrievable: only those of the active version are. `publish-version` makes the new file the active version and keeps the metadata of the previous one; an unchanged file is refused with `KNOWLEDGE_VERSION_UNCHANGED`.
 
 ## Use it over HTTP
 
@@ -175,7 +181,10 @@ curl -s -F file=@fixtures/docs/synthetic/project_report_sp12_riser_r3_integrity.
 
 curl -s http://127.0.0.1:8000/knowledge-ingestions/INGESTION_ID
 curl -s 'http://127.0.0.1:8000/knowledge-items/ITEM_ID/versions/v1/content?limit=5'
+curl -s 'http://127.0.0.1:8000/knowledge-items/ITEM_ID/versions/v1/chunks?limit=5'
 curl -s -X POST http://127.0.0.1:8000/knowledge-items/ITEM_ID/versions/v1/ingestions
+curl -s -F file=@fixtures/docs/cases/inspection_sp12_riser_r3_2026_v2.docx \
+  -F change_reason="Adds 3 readings." http://127.0.0.1:8000/knowledge-items/ITEM_ID/versions
 curl -s http://127.0.0.1:8000/health
 ```
 
@@ -214,6 +223,8 @@ Tests marked `slow` load real models: Docling for PDF files (skipped when `model
 | `KNOWLEDGE_PARSER_MODELS_UNAVAILABLE` | Docling models are not in `DOCLING_MODELS_DIR`; see setup step 4. |
 | `KNOWLEDGE_DOC_CONVERTER_UNAVAILABLE` | LibreOffice is missing; install it or set `LIBREOFFICE_PATH`. |
 | Status stays `reading_pages` | The vision worker or Ollama is not running. |
+| Status stays `chunking` | The chunking worker is not running. |
+| A duplicate you expected has no flag | The two items belong to different Nodes; only items of one Node are compared (ADR 0010). |
 | `failed` with `KNOWLEDGE_MODEL_UNAVAILABLE` | Ollama was down for every retry; start it, then `reingest`. |
 | Messages in `ingestion.dlq` | A step failed `WORKER_MAX_ATTEMPTS` times; its `reason` header says why. |
 | `KNOWLEDGE_QUEUE_MONITOR_UNAVAILABLE` on the page | RabbitMQ is down or `RABBITMQ_MANAGEMENT_URL` is wrong. Ingestion still works. |

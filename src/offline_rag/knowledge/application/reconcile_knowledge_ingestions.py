@@ -20,6 +20,7 @@ log = structlog.get_logger()
 _LANE_BY_STATUS = {
     IngestionStatus.QUEUED: IngestionLane.TEXT,
     IngestionStatus.READING_PAGES: IngestionLane.VISION,
+    IngestionStatus.CHUNKING: IngestionLane.CHUNKING,
 }
 
 

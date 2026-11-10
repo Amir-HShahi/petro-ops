@@ -3,7 +3,12 @@
 from typing import Any
 
 from offline_rag.knowledge.application.ingestion_queueing import IngestionReceipt
+from offline_rag.knowledge.application.knowledge_ingestion_queries import (
+    IngestionStatusView,
+    VersionChunks,
+)
 from offline_rag.knowledge.application.ports import IngestionQueueDepth, KnowledgeIngestionSummary
+from offline_rag.knowledge.domain.duplicate_detection import DuplicateFlag
 from offline_rag.knowledge.domain.extracted_content import (
     ContentBlockKind,
     ContentSource,
@@ -33,10 +38,62 @@ def ingestion_body(ingestion: KnowledgeIngestion) -> dict[str, Any]:
         "status": ingestion.status.value,
         "attempts": ingestion.attempts,
         "blocks_for_review": ingestion.blocks_for_review,
+        "chunk_count": ingestion.chunk_count,
         "failure_code": ingestion.failure_code,
         "failure_detail": ingestion.failure_detail,
         "created_at": ingestion.created_at.isoformat(),
         "updated_at": ingestion.updated_at.isoformat(),
+    }
+
+
+def ingestion_status_body(view: IngestionStatusView) -> dict[str, Any]:
+    """Return the body for the status of an ingestion with the flags of its version."""
+    return {
+        **ingestion_body(view.ingestion),
+        "duplicate_flags": [duplicate_flag_body(flag) for flag in view.duplicate_flags],
+    }
+
+
+def duplicate_flag_body(flag: DuplicateFlag) -> dict[str, Any]:
+    """Return the body for one duplicate flag."""
+    return {
+        "kind": flag.kind.value,
+        "existing_item_id": flag.existing_item_id,
+        "existing_version_tag": flag.existing_version_tag.value,
+        "score": round(flag.score, 4),
+        "is_ambiguous": flag.is_ambiguous,
+    }
+
+
+def chunks_body(item_id: str, found: VersionChunks, *, limit: int | None = None) -> dict[str, Any]:
+    """Return the body for the chunks of a version.
+
+    Args:
+        item_id: The KnowledgeItem.
+        found: The chunks and whether they are retrievable.
+        limit: The most chunks to include, from the start. None includes all of them.
+    """
+    chunks = found.chunks if limit is None else found.chunks[:limit]
+    return {
+        "item_id": item_id,
+        "version_tag": found.version_tag.value,
+        "active_version_tag": found.active_version_tag.value,
+        "is_retrievable": found.is_retrievable,
+        "chunk_count": len(found.chunks),
+        "chunks": [
+            {
+                "chunk_id": chunk.chunk_id,
+                "order": chunk.order,
+                "token_count": chunk.token_count,
+                "heading_path": list(chunk.source_reference.heading_path),
+                "page_start": chunk.source_reference.page_start,
+                "page_end": chunk.source_reference.page_end,
+                "first_block_order": chunk.first_block_order,
+                "last_block_order": chunk.last_block_order,
+                "text": chunk.text,
+            }
+            for chunk in chunks
+        ],
     }
 
 
@@ -48,6 +105,7 @@ def recent_ingestions_body(summaries: list[KnowledgeIngestionSummary]) -> dict[s
                 **ingestion_body(summary.ingestion),
                 "source_file_name": summary.source_file_name,
                 "document_format": summary.document_format.value,
+                "duplicate_flag_count": summary.duplicate_flag_count,
             }
             for summary in summaries
         ]

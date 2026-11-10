@@ -19,6 +19,7 @@ def started(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, object]]:
     [
         (["worker", "run", "--lane", "text"], ("worker", IngestionLane.TEXT)),
         (["worker", "run", "--lane", "vision"], ("worker", IngestionLane.VISION)),
+        (["worker", "run", "--lane", "chunking"], ("worker", IngestionLane.CHUNKING)),
         (["relay", "run"], ("relay", None)),
         (["api", "run"], ("api", None)),
     ],
@@ -39,15 +40,32 @@ def test_worker_is_refused_when_the_lane_is_unknown(started: list[tuple[str, obj
     assert started == []
 
 
-@pytest.mark.parametrize("command", ["show-content", "reingest"])
+@pytest.mark.parametrize("command", ["show-content", "show-chunks", "reingest"])
 def test_version_option_is_read_as_the_version_tag_when_given(command: str):
     arguments = cli.build_parser().parse_args([command, "ki-1", "--version", "v2"])
 
     assert arguments.version_tag == "v2"
 
 
-@pytest.mark.parametrize("command", ["show-content", "reingest"])
+@pytest.mark.parametrize("command", ["show-content", "show-chunks", "reingest"])
 def test_version_tag_is_left_to_the_use_case_when_no_version_is_given(command: str):
     arguments = cli.build_parser().parse_args([command, "ki-1"])
 
     assert arguments.version_tag is None
+
+
+def test_publish_version_reads_the_item_file_and_change_reason_when_given():
+    arguments = cli.build_parser().parse_args(
+        ["publish-version", "ki-1", "report_v2.docx", "--change-reason", "Adds 3 readings."]
+    )
+
+    assert (arguments.item_id, arguments.file.name, arguments.change_reason) == (
+        "ki-1",
+        "report_v2.docx",
+        "Adds 3 readings.",
+    )
+
+
+def test_publish_version_is_refused_when_no_change_reason_is_given():
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["publish-version", "ki-1", "report_v2.docx"])

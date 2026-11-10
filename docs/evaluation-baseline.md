@@ -32,12 +32,13 @@ The pass/fail checks for each component are in spec §19.1 and are not repeated 
 |---|---|---|---|
 | Top-K | Embedding index, RAG context assembly | K = 5 | proposed |
 | Exact duplicate | Duplicate detection | Same content hash | proposed |
-| Near duplicate | Duplicate detection | Cosine similarity ≥ 0.95 | proposed |
-| Chunk overlap | Overlap detection | Cosine similarity ≥ 0.85 between chunks | proposed |
+| Near duplicate | Duplicate detection | Same normalized text hash (ADR 0010) | proposed |
+| Chunk overlap | Overlap detection | ≥ 20% of a version's chunks have ≥ 40% of their 12-word shingles in another item of the same Node; 25% to 40% is ambiguous (ADR 0010) | proposed |
+| Chunk size | Chunking | Target 400, hard limit 512 estimated tokens, 12% overlap within a section (ADR 0009) | proposed |
 | Similar Issue | Issue comparison | Cosine similarity ≥ 0.80 | proposed |
 | JudgeThreshold | LLM as judge | 18/20, unless manual review accepts the output (spec) | proposed |
 
-The similarity thresholds depend on the embedding model. If phase 2 picks a model whose scores spread differently, they are re-tuned on the fixtures and go back to `proposed`.
+Duplicate and overlap checks are lexical for now and were tuned on `fixtures/docs` (ADR 0010); embedding-based thresholds return with the vector index in phase 8. The other similarity thresholds depend on the embedding model. If phase 2 picks a model whose scores spread differently, they are re-tuned on the fixtures and go back to `proposed`.
 
 ## Sign-off
 

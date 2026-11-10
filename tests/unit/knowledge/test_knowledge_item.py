@@ -8,9 +8,15 @@ from hypothesis import strategies as st
 from offline_rag.knowledge.domain.document_format import DocumentFormat
 from offline_rag.knowledge.domain.errors import (
     InvalidKnowledgeVersionHistoryError,
+    KnowledgeVersionChangeReasonMissingError,
     KnowledgeVersionNotFoundError,
+    KnowledgeVersionUnchangedError,
 )
-from offline_rag.knowledge.domain.events import KnowledgeItemSubmitted, MetadataRecorded
+from offline_rag.knowledge.domain.events import (
+    KnowledgeItemSubmitted,
+    KnowledgeVersionPublished,
+    MetadataRecorded,
+)
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
 from offline_rag.knowledge.domain.knowledge_scope import ConfidentialityLevel, KnowledgeScope
 from offline_rag.knowledge.domain.knowledge_version import (
@@ -192,3 +198,103 @@ def test_missing_version_is_reported_when_its_tag_is_unknown():
 
     assert caught.value.code == "KNOWLEDGE_VERSION_NOT_FOUND"
     assert caught.value.details == {"item_id": "ki-1", "version_tag": "v7"}
+
+
+PUBLISHED_AT = datetime(2026, 11, 5, 9, 0, tzinfo=UTC)
+NEW_METADATA = MetadataRecord(document_type="inspection_report", tags=("riser", "v2"))
+
+
+def _publish(
+    item: KnowledgeItem, *, content_hash: str = "def456", change_reason: str = "Added 3 readings."
+) -> KnowledgeVersion:
+    return item.publish_version(
+        source_file_name="inspection_sp12_riser_r3_2026_v2.docx",
+        source_file_reference="file-2",
+        document_format=DocumentFormat.DOCX,
+        content_hash=content_hash,
+        metadata=NEW_METADATA,
+        change_reason=change_reason,
+        published_at=PUBLISHED_AT,
+    )
+
+
+def test_new_version_follows_the_newest_and_becomes_active_when_published():
+    item = _submitted_item()
+
+    version = _publish(item)
+
+    assert (version.version_tag, version.sequence_number) == (VersionTag("v2"), 2)
+    assert version.previous_version_tag == VersionTag("v1")
+    assert version.change_reason == "Added 3 readings."
+    assert item.active_version == version
+    assert [v.version_tag.value for v in item.versions] == ["v1", "v2"]
+
+
+def test_old_version_stays_readable_when_a_new_one_is_published():
+    item = _submitted_item()
+
+    _publish(item)
+
+    assert item.get_version(VersionTag("v1")).content_hash == "abc123"
+
+
+def test_published_and_metadata_events_are_recorded_when_a_version_is_published():
+    item = _submitted_item()
+    item.pull_events()
+
+    _publish(item)
+
+    assert item.pull_events() == (
+        KnowledgeVersionPublished(
+            occurred_at=PUBLISHED_AT,
+            item_id="ki-1",
+            version_tag=VersionTag("v2"),
+            previous_version_tag=VersionTag("v1"),
+            change_reason="Added 3 readings.",
+            document_format=DocumentFormat.DOCX,
+            content_hash="def456",
+        ),
+        MetadataRecorded(
+            occurred_at=PUBLISHED_AT,
+            item_id="ki-1",
+            version_tag=VersionTag("v2"),
+            metadata=NEW_METADATA,
+        ),
+    )
+
+
+@pytest.mark.parametrize("change_reason", ["", "   "])
+def test_publishing_is_refused_when_the_change_reason_is_blank(change_reason: str):
+    item = _submitted_item()
+
+    with pytest.raises(KnowledgeVersionChangeReasonMissingError):
+        _publish(item, change_reason=change_reason)
+
+    assert len(item.versions) == 1
+
+
+def test_publishing_is_refused_when_the_file_is_the_active_version_file():
+    item = _submitted_item()
+
+    with pytest.raises(KnowledgeVersionUnchangedError) as caught:
+        _publish(item, content_hash="abc123")
+
+    assert caught.value.details == {"item_id": "ki-1", "active_version_tag": "v1"}
+    assert item.active_version.version_tag == VersionTag("v1")
+
+
+@given(st.integers(min_value=1, max_value=8))
+def test_history_stays_valid_when_versions_are_published_one_after_another(count: int):
+    item = _submitted_item()
+
+    for number in range(count):
+        _publish(item, content_hash=f"hash-{number}")
+
+    rebuilt = KnowledgeItem(
+        item_id=item.item_id,
+        owner_node_id=item.owner_node_id,
+        scope=item.scope,
+        versions=item.versions,
+        active_version_tag=item.active_version.version_tag,
+    )
+    assert rebuilt.active_version.sequence_number == count + 1

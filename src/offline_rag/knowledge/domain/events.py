@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from offline_rag.knowledge.domain.document_format import DocumentFormat
+from offline_rag.knowledge.domain.duplicate_detection import DuplicateKind
 from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.shared_kernel.domain_event import DomainEvent
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
@@ -56,3 +57,34 @@ class PagesReadWithLvm(DomainEvent):
     version_tag: VersionTag
     page_numbers: tuple[int, ...]
     tables_for_review: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class KnowledgeVersionPublished(DomainEvent):
+    """A new version of a KnowledgeItem became its active version (spec §7.6).
+
+    The chunks of the previous version stop being retrievable from now on.
+    """
+
+    item_id: str
+    version_tag: VersionTag
+    previous_version_tag: VersionTag
+    change_reason: str
+    document_format: DocumentFormat
+    content_hash: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class DuplicateDetected(DomainEvent):
+    """A KnowledgeVersion repeats another KnowledgeItem of the same Node (spec §7.7).
+
+    Both items are kept; the event only reports the finding.
+    """
+
+    item_id: str
+    version_tag: VersionTag
+    kind: DuplicateKind
+    existing_item_id: str
+    existing_version_tag: VersionTag
+    score: float
+    is_ambiguous: bool

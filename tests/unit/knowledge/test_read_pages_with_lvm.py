@@ -4,6 +4,7 @@ import pytest
 from structlog.testing import capture_logs
 from tests.fakes.knowledge import (
     FakeClock,
+    FakeIdGenerator,
     FakeLvm,
     FakePageRenderer,
     FakeTableOcr,
@@ -16,7 +17,7 @@ from tests.fakes.knowledge import (
 
 from offline_rag.knowledge.application.commands import ReadPagesWithLvm
 from offline_rag.knowledge.application.errors import KnowledgeIngestionNotFoundError
-from offline_rag.knowledge.application.ports import PageReading, PageTable
+from offline_rag.knowledge.application.ports import IngestionLane, PageReading, PageTable
 from offline_rag.knowledge.application.read_pages_with_lvm import ReadPagesWithLvmHandler
 from offline_rag.knowledge.domain.document_format import DocumentFormat
 from offline_rag.knowledge.domain.events import PagesReadWithLvm
@@ -73,6 +74,7 @@ class Pipeline:
             lvm=lvm or FakeLvm({2: SCANNED_PAGE}),
             table_ocr=self.table_ocr,
             clock=FakeClock(NOW),
+            id_generator=FakeIdGenerator("msg"),
             event_publisher=self.publisher,
             min_page_text_chars=20,
         )
@@ -216,27 +218,25 @@ def test_ingestion_fails_when_the_version_was_not_extracted():
     )
 
 
-def test_ingestion_completes_with_review_count_when_pages_are_read():
-    ocr = FakeTableOcr({2: [[["Location", "Measured (mm)"], ["R-3 EL +8.5 m, 6 o'clock", "20.0"]]]})
-    pipeline = Pipeline(table_ocr=ocr)
+def test_ingestion_is_handed_to_the_chunking_worker_when_pages_are_read():
+    pipeline = Pipeline()
 
     result = pipeline.run()
 
-    assert (result.status, result.blocks_for_review, result.attempts) == (
-        IngestionStatus.COMPLETED,
-        1,
-        2,
-    )
-    assert pipeline.ingestions.get_by_id("ing-1").status == IngestionStatus.COMPLETED
+    assert (result.status, result.attempts) == (IngestionStatus.CHUNKING, 2)
+    assert pipeline.ingestions.get_by_id("ing-1").status == IngestionStatus.CHUNKING
+    assert [(message.ingestion_id, message.lane) for message in pipeline.ingestions.messages] == [
+        ("ing-1", IngestionLane.CHUNKING)
+    ]
 
 
-def test_message_seen_again_changes_nothing_when_ingestion_has_completed():
+def test_message_seen_again_changes_nothing_when_ingestion_has_moved_on():
     pipeline = Pipeline()
     pipeline.run()
 
     again = pipeline.run()
 
-    assert again.status == IngestionStatus.COMPLETED
+    assert again.status == IngestionStatus.CHUNKING
     assert pipeline.renderer.pages == [2]
 
 

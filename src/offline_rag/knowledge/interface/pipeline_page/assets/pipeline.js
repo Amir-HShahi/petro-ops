@@ -89,7 +89,7 @@ function relativeTime(isoTime) {
 }
 
 function fillCard(card, ingestion) {
-  const isRunning = ["extracting", "reading_pages"].includes(ingestion.status);
+  const isRunning = ["extracting", "reading_pages", "chunking"].includes(ingestion.status);
   const isCompleted = ingestion.status === "completed";
   card.className = `card${isRunning ? " running" : ""}${isCompleted ? " clickable" : ""}`;
   card.tabIndex = isCompleted ? 0 : -1;
@@ -105,6 +105,11 @@ function fillCard(card, ingestion) {
     const review = element("span", ingestion.blocks_for_review ? "review" : "",
       `${ingestion.blocks_for_review} for review`);
     meta.append(review);
+  }
+  if (ingestion.chunk_count !== null) meta.append(element("span", "", `${ingestion.chunk_count} chunks`));
+  if (ingestion.duplicate_flag_count) {
+    const count = ingestion.duplicate_flag_count;
+    meta.append(element("span", "review", `${count} duplicate flag${count === 1 ? "" : "s"}`));
   }
   const parts = [element("div", "file", ingestion.source_file_name), meta];
   if (ingestion.failure_code) parts.push(element("div", "failure", ingestion.failure_code));
@@ -237,16 +242,32 @@ function blockLocation(block) {
   return "Before the first heading";
 }
 
+function flagRow(flag) {
+  const row = element("li", "flag-row");
+  const kind = flag.kind.replace("_", " ");
+  row.append(
+    element("span", "badge flag", flag.is_ambiguous ? `${kind} · ambiguous` : kind),
+    element("span", "", `score ${flag.score}`),
+    element("span", "", "of"),
+    element("span", "item", `${flag.existing_item_id} ${flag.existing_version_tag}`),
+  );
+  return row;
+}
+
 async function openBlocks(ingestion) {
   if (ingestion.status !== "completed") return;
   const dialog = document.getElementById("blocks-dialog");
   const list = document.getElementById("blocks-list");
+  const flags = document.getElementById("blocks-flags");
   const summary = document.getElementById("blocks-summary");
   document.getElementById("blocks-title").textContent = ingestion.source_file_name;
   summary.textContent = "Loading…";
   list.replaceChildren();
+  flags.replaceChildren();
   dialog.showModal();
   try {
+    const status = await getJson(`/knowledge-ingestions/${encodeURIComponent(ingestion.ingestion_id)}`);
+    flags.replaceChildren(...status.duplicate_flags.map(flagRow));
     const body = await getJson(
       `/knowledge-items/${encodeURIComponent(ingestion.item_id)}/versions/` +
       `${encodeURIComponent(ingestion.version_tag)}/content?limit=${MAX_BLOCKS}`,
@@ -256,7 +277,7 @@ async function openBlocks(ingestion) {
     summary.textContent =
       `${extraction.document_format.toUpperCase()} · ${pages}${extraction.block_count} blocks · ` +
       `${extraction.table_count} tables · ${extraction.lvm_block_count} read by the LVM · ` +
-      `${extraction.blocks_for_review} for review`;
+      `${extraction.blocks_for_review} for review · ${status.chunk_count} chunks`;
     list.replaceChildren(...body.blocks.map((block) => {
       const item = element("li", `block ${block.kind}${block.needs_human_review ? " needs-review" : ""}`);
       const head = element("div", "block-head");

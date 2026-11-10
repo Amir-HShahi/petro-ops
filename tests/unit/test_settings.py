@@ -73,3 +73,46 @@ def test_api_port_is_rejected_when_out_of_range(port: int):
 def test_rabbitmq_management_url_is_rejected_when_host_is_not_loopback():
     with pytest.raises(ValidationError, match="loopback"):
         Settings(rabbitmq_management_url="http://user:secret@mq.example.com:15672")
+
+
+def test_chunk_and_overlap_defaults_are_accepted_when_nothing_is_set():
+    settings = Settings()
+
+    assert (settings.chunk_target_tokens, settings.chunk_max_tokens) == (400, 512)
+    assert settings.overlap_ambiguous_from_similarity < settings.overlap_chunk_similarity
+
+
+def test_chunk_max_tokens_is_rejected_when_it_is_below_the_target():
+    with pytest.raises(ValidationError, match="chunk_max_tokens"):
+        Settings(chunk_target_tokens=500, chunk_max_tokens=400)
+
+
+def test_chunk_max_tokens_is_rejected_when_it_reaches_the_embedding_context():
+    with pytest.raises(ValidationError):
+        Settings(chunk_max_tokens=2048)
+
+
+@pytest.mark.parametrize("share", [-0.1, 0.51])
+def test_chunk_overlap_share_is_rejected_when_out_of_range(share: float):
+    with pytest.raises(ValidationError):
+        Settings(chunk_overlap_share=share)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["overlap_chunk_similarity", "overlap_ambiguous_from_similarity", "overlap_min_chunk_share"],
+)
+@pytest.mark.parametrize("value", [0, 1.01])
+def test_overlap_share_is_rejected_when_out_of_range(field: str, value: float):
+    with pytest.raises(ValidationError):
+        Settings(**{field: value})
+
+
+def test_ambiguous_band_is_rejected_when_it_starts_at_the_overlap_threshold():
+    with pytest.raises(ValidationError, match="overlap_ambiguous_from_similarity"):
+        Settings(overlap_chunk_similarity=0.4, overlap_ambiguous_from_similarity=0.4)
+
+
+def test_duplicate_shingle_words_is_rejected_when_zero():
+    with pytest.raises(ValidationError):
+        Settings(duplicate_shingle_words=0)

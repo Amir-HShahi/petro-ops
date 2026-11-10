@@ -8,13 +8,21 @@ from tests.fakes.knowledge import (
     FakeLvm,
     FakePageRenderer,
     FakeTableOcr,
+    FakeTokenizer,
+    InMemoryDuplicateFlagRepository,
     InMemoryEventPublisher,
     InMemoryExtractedContentRepository,
+    InMemoryKnowledgeChunkRepository,
     InMemoryKnowledgeIngestionRepository,
     InMemoryKnowledgeItemRepository,
     InMemorySourceFileStore,
+    InMemoryVersionFingerprintRepository,
 )
 
+from offline_rag.knowledge.application.chunk_knowledge_content import (
+    ChunkingSizes,
+    ChunkKnowledgeContentHandler,
+)
 from offline_rag.knowledge.application.commands import RunIngestionStep
 from offline_rag.knowledge.application.extract_knowledge_content import (
     ExtractKnowledgeContentHandler,
@@ -29,6 +37,7 @@ from offline_rag.knowledge.application.run_ingestion_step import (
     RunIngestionStepHandler,
 )
 from offline_rag.knowledge.domain.document_format import DocumentFormat
+from offline_rag.knowledge.domain.duplicate_detection import DuplicateDetector
 from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus, KnowledgeIngestion
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
 from offline_rag.knowledge.domain.knowledge_scope import ConfidentialityLevel, KnowledgeScope
@@ -108,8 +117,25 @@ def run_step(
             lvm=FakeLvm(),
             table_ocr=FakeTableOcr(),
             clock=clock,
+            id_generator=FakeIdGenerator("msg"),
             event_publisher=publisher,
             min_page_text_chars=5,
+        ),
+        chunk_handler=ChunkKnowledgeContentHandler(
+            ingestion_repository=ingestions,
+            repository=items,
+            extracted_content_repository=contents,
+            chunk_repository=InMemoryKnowledgeChunkRepository(items),
+            fingerprint_repository=InMemoryVersionFingerprintRepository(items),
+            duplicate_flag_repository=InMemoryDuplicateFlagRepository(),
+            tokenizer=FakeTokenizer(),
+            detector=DuplicateDetector(
+                overlap_chunk_similarity=0.4, ambiguous_from_similarity=0.25, min_chunk_share=0.2
+            ),
+            clock=clock,
+            event_publisher=publisher,
+            sizes=ChunkingSizes(target_tokens=400, max_tokens=512, overlap_share=0.12),
+            words_per_shingle=12,
         ),
         fail_handler=fail_handler,
         max_attempts=3,

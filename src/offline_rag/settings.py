@@ -5,13 +5,15 @@ must also be listed in `.env.example`; a unit test checks that they match.
 """
 
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import Field, PositiveInt, field_validator
+from pydantic import Field, PositiveInt, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+# The embedding model reads at most 2048 tokens (models/manifest.yaml, ADR 0009).
+EMBEDDING_CONTEXT_TOKENS = 2048
 
 
 class Settings(BaseSettings):
@@ -58,6 +60,20 @@ class Settings(BaseSettings):
         lvm_max_attempts: How often the LVM is asked before a malformed answer fails.
         prompts_dir: The folder with the prompt registry and templates.
         model_manifest_path: The file that names the model of each role.
+        chunk_target_tokens: The size a KnowledgeChunk grows to before a new one
+            starts, in estimated tokens (ADR 0009).
+        chunk_max_tokens: The size no KnowledgeChunk may pass, in estimated tokens.
+            At least `chunk_target_tokens` and below the embedding model's context.
+        chunk_overlap_share: Share of a chunk, from 0 to 0.5, repeated at the start
+            of the next chunk in the same section.
+        duplicate_shingle_words: Words per shingle when chunk text is compared for
+            duplicates and overlap (ADR 0010).
+        overlap_chunk_similarity: Share of a chunk's shingles, from 0 to 1, found in
+            another item, from which the chunk counts as repeating it.
+        overlap_ambiguous_from_similarity: Lower share, from 0 to 1, from which a
+            chunk counts towards an ambiguous overlap. Below `overlap_chunk_similarity`.
+        overlap_min_chunk_share: Share of a version's chunks, from 0 to 1, that must
+            repeat another item for an overlap flag.
     """
 
     # extra="forbid" makes a stale or misspelled variable in .env fail at startup.
@@ -89,6 +105,13 @@ class Settings(BaseSettings):
     lvm_max_attempts: PositiveInt = 2
     prompts_dir: Path = Path("prompts")
     model_manifest_path: Path = Path("models/manifest.yaml")
+    chunk_target_tokens: PositiveInt = 400
+    chunk_max_tokens: int = Field(default=512, ge=1, lt=EMBEDDING_CONTEXT_TOKENS)
+    chunk_overlap_share: float = Field(default=0.12, ge=0, le=0.5)
+    duplicate_shingle_words: PositiveInt = 12
+    overlap_chunk_similarity: float = Field(default=0.40, gt=0, le=1)
+    overlap_ambiguous_from_similarity: float = Field(default=0.25, gt=0, le=1)
+    overlap_min_chunk_share: float = Field(default=0.20, gt=0, le=1)
 
     @field_validator("database_url", "rabbitmq_url", "rabbitmq_management_url")
     @classmethod
@@ -103,6 +126,16 @@ class Settings(BaseSettings):
         # The API has no authentication; the loopback binding is its only guard (ADR 0006).
         _check_loopback(host)
         return host
+
+    @model_validator(mode="after")
+    def _check_chunk_and_overlap_limits(self) -> Self:
+        if self.chunk_max_tokens < self.chunk_target_tokens:
+            message = "chunk_max_tokens must be at least chunk_target_tokens"
+            raise ValueError(message)
+        if self.overlap_ambiguous_from_similarity >= self.overlap_chunk_similarity:
+            message = "overlap_ambiguous_from_similarity must be below overlap_chunk_similarity"
+            raise ValueError(message)
+        return self
 
 
 def _check_loopback(host: str | None) -> None:

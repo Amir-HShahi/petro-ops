@@ -16,7 +16,11 @@ from typing import Any, TextIO
 import structlog
 
 from offline_rag.bootstrap import KnowledgeWiring, build_knowledge, configure_logging
-from offline_rag.knowledge.application.commands import ReingestKnowledgeItem, SubmitKnowledgeItem
+from offline_rag.knowledge.application.commands import (
+    PublishKnowledgeVersion,
+    ReingestKnowledgeItem,
+    SubmitKnowledgeItem,
+)
 from offline_rag.knowledge.application.ports import IngestionLane
 from offline_rag.knowledge.domain.knowledge_scope import ConfidentialityLevel, KnowledgeScope
 from offline_rag.knowledge.domain.version_tag import VersionTag
@@ -29,8 +33,9 @@ from offline_rag.knowledge.interface.problem_details import (
     problem_from_error,
 )
 from offline_rag.knowledge.interface.response_bodies import (
+    chunks_body,
     content_body,
-    ingestion_body,
+    ingestion_status_body,
     receipt_body,
 )
 from offline_rag.settings import Settings
@@ -43,6 +48,7 @@ log = structlog.get_logger()
 EXIT_OK = 0
 EXIT_FAILED = 1
 DEFAULT_SHOWN_BLOCKS = 20
+DEFAULT_SHOWN_CHUNKS = 20
 
 Command = Callable[[argparse.Namespace, KnowledgeWiring, Settings], dict[str, Any]]
 
@@ -74,6 +80,15 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument("--related-executor", action="append", default=[])
     submit.add_argument("--related-rfp", action="append", default=[])
 
+    publish = commands.add_parser(
+        "publish-version",
+        help="Publish a new file as the next, active version of an item and queue its ingestion.",
+    )
+    publish.add_argument("item_id")
+    publish.add_argument("file", type=Path, help="The new file.")
+    publish.add_argument("--change-reason", required=True, help="Why the item changed.")
+    publish.add_argument("--diff-summary", help="A short summary of what changed.")
+
     status = commands.add_parser("status", help="Print the status of an ingestion.")
     status.add_argument("ingestion_id")
 
@@ -81,6 +96,11 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("item_id")
     show.add_argument("--version", dest="version_tag", help="Default: the active version.")
     show.add_argument("--limit", type=int, default=DEFAULT_SHOWN_BLOCKS, help="Blocks to print.")
+
+    chunks = commands.add_parser("show-chunks", help="Print the chunks of a version.")
+    chunks.add_argument("item_id")
+    chunks.add_argument("--version", dest="version_tag", help="Default: the active version.")
+    chunks.add_argument("--limit", type=int, default=DEFAULT_SHOWN_CHUNKS, help="Chunks to print.")
 
     reingest = commands.add_parser(
         "reingest", help="Queue a version for ingestion again, replacing its content."
@@ -134,8 +154,10 @@ def _run_command(arguments: argparse.Namespace, settings: Settings) -> int:
     structlog.contextvars.bind_contextvars(request_id=request_id)
     commands: dict[str, Command] = {
         "submit": _submit,
+        "publish-version": _publish_version,
         "status": _status,
         "show-content": _show_content,
+        "show-chunks": _show_chunks,
         "reingest": _reingest,
     }
 
@@ -160,15 +182,18 @@ def _run_command(arguments: argparse.Namespace, settings: Settings) -> int:
     return EXIT_OK
 
 
+def _read_file(file: Path) -> bytes:
+    try:
+        return file.read_bytes()
+    except OSError as error:
+        raise SourceFileNotReadableError(file.name) from error
+
+
 def _submit(
     arguments: argparse.Namespace, knowledge: KnowledgeWiring, settings: Settings
 ) -> dict[str, Any]:
     file: Path = arguments.file
-    try:
-        content = file.read_bytes()
-    except OSError as error:
-        raise SourceFileNotReadableError(file.name) from error
-
+    content = _read_file(file)
     receipt = knowledge.submit_handler.submit(
         SubmitKnowledgeItem(
             owner_node_id=NodeIdentifier(arguments.node),
@@ -196,10 +221,27 @@ def _submit(
     return receipt_body(receipt)
 
 
+def _publish_version(
+    arguments: argparse.Namespace, knowledge: KnowledgeWiring, settings: Settings
+) -> dict[str, Any]:
+    file: Path = arguments.file
+    receipt = knowledge.publish_version_handler.publish(
+        PublishKnowledgeVersion(
+            item_id=arguments.item_id,
+            source_file_name=file.name,
+            content=_read_file(file),
+            change_reason=arguments.change_reason,
+            diff_summary=arguments.diff_summary,
+            request_id=_request_id(),
+        )
+    )
+    return receipt_body(receipt)
+
+
 def _status(
     arguments: argparse.Namespace, knowledge: KnowledgeWiring, settings: Settings
 ) -> dict[str, Any]:
-    return ingestion_body(knowledge.queries.get_ingestion(arguments.ingestion_id))
+    return ingestion_status_body(knowledge.queries.get_ingestion(arguments.ingestion_id))
 
 
 def _show_content(
@@ -215,6 +257,13 @@ def _show_content(
         min_page_text_chars=settings.min_page_text_chars,
         limit=arguments.limit,
     )
+
+
+def _show_chunks(
+    arguments: argparse.Namespace, knowledge: KnowledgeWiring, settings: Settings
+) -> dict[str, Any]:
+    found = knowledge.queries.get_chunks(arguments.item_id, _version_tag(arguments))
+    return chunks_body(arguments.item_id, found, limit=arguments.limit)
 
 
 def _reingest(

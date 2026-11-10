@@ -5,6 +5,7 @@ from tests.fakes.knowledge import (
     FakeIngestionQueueMonitor,
     FakeNodeDirectory,
     InMemoryExtractedContentRepository,
+    InMemoryKnowledgeChunkRepository,
     InMemoryKnowledgeIngestionRepository,
     InMemoryKnowledgeItemRepository,
     InMemoryOutbox,
@@ -95,6 +96,8 @@ def queries(
         ingestion_repository=ingestions,
         repository=repository,
         extracted_content_repository=contents,
+        chunk_repository=InMemoryKnowledgeChunkRepository(repository),
+        duplicate_flag_repository=ingestions.flag_repository,
         outbox=InMemoryOutbox(ingestions),
         node_directory=FakeNodeDirectory(["sp12_inspection_team", "platform_sp12"]),
         queue_monitor=queue_monitor,
@@ -102,7 +105,7 @@ def queries(
 
 
 def test_ingestion_is_returned_when_it_exists(queries: KnowledgeIngestionQueries):
-    assert queries.get_ingestion("ing-1").item_id == "ki-1"
+    assert queries.get_ingestion("ing-1").ingestion.item_id == "ki-1"
 
 
 def test_lookup_raises_not_found_when_ingestion_does_not_exist(queries: KnowledgeIngestionQueries):

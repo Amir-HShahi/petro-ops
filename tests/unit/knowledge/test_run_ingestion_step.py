@@ -8,13 +8,21 @@ from tests.fakes.knowledge import (
     FakeLvm,
     FakePageRenderer,
     FakeTableOcr,
+    FakeTokenizer,
+    InMemoryDuplicateFlagRepository,
     InMemoryEventPublisher,
     InMemoryExtractedContentRepository,
+    InMemoryKnowledgeChunkRepository,
     InMemoryKnowledgeIngestionRepository,
     InMemoryKnowledgeItemRepository,
     InMemorySourceFileStore,
+    InMemoryVersionFingerprintRepository,
 )
 
+from offline_rag.knowledge.application.chunk_knowledge_content import (
+    ChunkingSizes,
+    ChunkKnowledgeContentHandler,
+)
 from offline_rag.knowledge.application.commands import RunIngestionStep
 from offline_rag.knowledge.application.extract_knowledge_content import (
     ExtractKnowledgeContentHandler,
@@ -29,6 +37,7 @@ from offline_rag.knowledge.application.run_ingestion_step import (
     RunIngestionStepHandler,
 )
 from offline_rag.knowledge.domain.document_format import DocumentFormat
+from offline_rag.knowledge.domain.duplicate_detection import DuplicateDetector
 from offline_rag.knowledge.domain.extracted_content import ContentBlock, ExtractedContent
 from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus, KnowledgeIngestion
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
@@ -36,6 +45,7 @@ from offline_rag.knowledge.domain.knowledge_scope import ConfidentialityLevel, K
 from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.knowledge.infrastructure.errors import (
     DocConverterUnavailableError,
+    KnowledgeStorageError,
     ModelUnavailableError,
 )
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
@@ -102,6 +112,7 @@ def _handler(
     *,
     parser: FakeDocumentParser | None = None,
     lvm: FakeLvm | None = None,
+    chunk_repository: InMemoryKnowledgeChunkRepository | None = None,
 ) -> RunIngestionStepHandler:
     clock = FakeClock(NOW)
     publisher = InMemoryEventPublisher()
@@ -126,12 +137,47 @@ def _handler(
             lvm=lvm or FakeLvm(),
             table_ocr=FakeTableOcr(),
             clock=clock,
+            id_generator=FakeIdGenerator("msg"),
             event_publisher=publisher,
             min_page_text_chars=5,
+        ),
+        chunk_handler=ChunkKnowledgeContentHandler(
+            ingestion_repository=ingestions,
+            repository=items,
+            extracted_content_repository=contents,
+            chunk_repository=chunk_repository or InMemoryKnowledgeChunkRepository(items),
+            fingerprint_repository=InMemoryVersionFingerprintRepository(items),
+            duplicate_flag_repository=InMemoryDuplicateFlagRepository(),
+            tokenizer=FakeTokenizer(),
+            detector=DuplicateDetector(
+                overlap_chunk_similarity=0.4, ambiguous_from_similarity=0.25, min_chunk_share=0.2
+            ),
+            clock=clock,
+            event_publisher=publisher,
+            sizes=ChunkingSizes(target_tokens=400, max_tokens=512, overlap_share=0.12),
+            words_per_shingle=12,
         ),
         fail_handler=FailKnowledgeIngestionHandler(ingestion_repository=ingestions, clock=clock),
         max_attempts=MAX_ATTEMPTS,
     )
+
+
+class FailingChunkRepository(InMemoryKnowledgeChunkRepository):
+    """Fails every write, as if the database were down."""
+
+    def replace(self, *args: object) -> None:
+        operation = "replace_chunks"
+        raise KnowledgeStorageError(operation)
+
+
+def _waiting_for_chunking(
+    ingestions: InMemoryKnowledgeIngestionRepository, contents: InMemoryExtractedContentRepository
+) -> None:
+    ingestion = ingestions.get_by_id("ing-1")
+    ingestion.start_extraction(NOW)
+    ingestion.wait_for_chunking(NOW)
+    ingestions.save(ingestion)
+    contents.save("ki-1", VersionTag("v1"), TEXT_ONLY)
 
 
 def _waiting_for_pages(
@@ -145,7 +191,7 @@ def _waiting_for_pages(
 
 
 @pytest.mark.usefixtures("queued")
-def test_text_message_is_done_when_extraction_completes(
+def test_text_message_is_done_when_extraction_hands_over_to_chunking(
     ingestions: InMemoryKnowledgeIngestionRepository,
     items: InMemoryKnowledgeItemRepository,
     file_store: InMemorySourceFileStore,
@@ -156,7 +202,7 @@ def test_text_message_is_done_when_extraction_completes(
     outcome = handler.run(RunIngestionStep(ingestion_id="ing-1", lane=IngestionLane.TEXT))
 
     assert outcome == IngestionStepOutcome.DONE
-    assert ingestions.get_by_id("ing-1").status == IngestionStatus.COMPLETED
+    assert ingestions.get_by_id("ing-1").status == IngestionStatus.CHUNKING
 
 
 @pytest.mark.usefixtures("queued")
@@ -172,7 +218,41 @@ def test_vision_message_is_done_when_pages_are_read(
     outcome = handler.run(RunIngestionStep(ingestion_id="ing-1", lane=IngestionLane.VISION))
 
     assert outcome == IngestionStepOutcome.DONE
+    assert ingestions.get_by_id("ing-1").status == IngestionStatus.CHUNKING
+
+
+@pytest.mark.usefixtures("queued")
+def test_chunking_message_is_done_when_the_version_is_chunked(
+    ingestions: InMemoryKnowledgeIngestionRepository,
+    items: InMemoryKnowledgeItemRepository,
+    file_store: InMemorySourceFileStore,
+    contents: InMemoryExtractedContentRepository,
+):
+    _waiting_for_chunking(ingestions, contents)
+    handler = _handler(ingestions, items, file_store, contents)
+
+    outcome = handler.run(RunIngestionStep(ingestion_id="ing-1", lane=IngestionLane.CHUNKING))
+
+    assert outcome == IngestionStepOutcome.DONE
     assert ingestions.get_by_id("ing-1").status == IngestionStatus.COMPLETED
+
+
+@pytest.mark.usefixtures("queued")
+def test_chunking_message_is_retried_and_run_stays_open_when_the_database_is_down(
+    ingestions: InMemoryKnowledgeIngestionRepository,
+    items: InMemoryKnowledgeItemRepository,
+    file_store: InMemorySourceFileStore,
+    contents: InMemoryExtractedContentRepository,
+):
+    _waiting_for_chunking(ingestions, contents)
+    handler = _handler(
+        ingestions, items, file_store, contents, chunk_repository=FailingChunkRepository(items)
+    )
+
+    outcome = handler.run(RunIngestionStep(ingestion_id="ing-1", lane=IngestionLane.CHUNKING))
+
+    assert outcome == IngestionStepOutcome.RETRY
+    assert ingestions.get_by_id("ing-1").status == IngestionStatus.CHUNKING
 
 
 @pytest.mark.usefixtures("queued")
@@ -245,7 +325,7 @@ def test_retried_message_starts_the_extraction_over_when_run_is_extracting(
 
     handler.run(RunIngestionStep(ingestion_id="ing-1", lane=IngestionLane.TEXT, attempt=2))
 
-    assert ingestions.get_by_id("ing-1").status == IngestionStatus.COMPLETED
+    assert ingestions.get_by_id("ing-1").status == IngestionStatus.CHUNKING
 
 
 def test_message_is_done_when_its_ingestion_does_not_exist(

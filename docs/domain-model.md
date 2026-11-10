@@ -94,7 +94,9 @@ Spec §7 and §11.1. The core of the system.
 | Name | Kind | Rule it enforces |
 |---|---|---|
 | `KnowledgeVersion` | E | Has a sequence number, change reason, updated metadata, a reference to the previous version, an active marker and an optional diff summary (§7.6). The sequence number only grows. A published version never changes. |
-| `KnowledgeChunk` | E | Belongs to exactly one version. Keeps the source item id, version, page or section, heading path, order and inherited metadata (§7.4). Only chunks of the active version are retrievable by default. |
+| `KnowledgeChunk` | E | Belongs to exactly one version. Keeps the source item id, version, page or section, heading path, order and inherited metadata (§7.4). Only chunks of the active version are retrievable by default. Retrievability is derived from the item's active version, not stored; a new version supersedes the old chunks (ADR 0009). |
+| `SourceReference` | VO | The item, version, heading path and first and last page a chunk was cut from (§7.4). An answer cites it. |
+| `DuplicateFlag` | VO | A version repeats another item of the same Node: kind (`DuplicateKind`: exact, near, metadata variant, overlap), the existing item and version, a score from 0 to 1 and an ambiguous mark (§7.7, ADR 0010). A finding, never a decision. |
 | `KnowledgeScope` | VO | Domain, confidentiality level and usage scope of an item (§5.3). |
 | `VersionTag` | VO | Immutable version id (§5.3). |
 | `MetadataRecord` | VO | Structured metadata (§7.5). Shared with Issue Management (shared kernel). |
@@ -378,11 +380,27 @@ Rules for all repositories:
 
 - `get_by_id(item_id: str) -> KnowledgeItem`. Raises `KNOWLEDGE_ITEM_NOT_FOUND`.
 - `find_by_owner(node_id: NodeIdentifier) -> list[KnowledgeItem]`.
-- `find_by_content_hash(node_id: NodeIdentifier, content_hash: str) -> KnowledgeItem | None`. This is the exact-duplicate check by file hash (§7.7).
 - `add(item: KnowledgeItem) -> None`.
-- `save(item: KnowledgeItem) -> None`. A new `KnowledgeVersion` is saved through its item.
+- A new `KnowledgeVersion` is saved through its item, with its ingestion, in `KnowledgeIngestionRepository.add_with_version` (ADR 0005).
 
-Near-duplicate candidates come from similarity search over chunks. That is a search index, not a repository, and it is a separate port (not named yet). Depends on open question 5 (who owns an item) and open question 4 (no equipment lookup is added).
+**`VersionFingerprintRepository`** (built)
+
+The exact- and near-duplicate lookups (§7.7, ADR 0010). It returns `VersionFingerprint`s (item, version, owner Node, file hash, normalized text hash, metadata), not whole items.
+
+- `find_by_content_hash(node_id, content_hash) -> list[VersionFingerprint]`: every version of the Node's items with this file hash.
+- `find_by_text_hash(node_id, normalized_text_hash) -> list[VersionFingerprint]`.
+- `list_active_by_owner(node_id) -> list[VersionFingerprint]`.
+- `save_text_hash(item_id, version_tag, normalized_text_hash) -> None`, set when the version is chunked.
+
+**`KnowledgeChunkRepository`** (built)
+
+- `replace(item_id, version_tag, chunks) -> None`, `list_by_version(item_id, version_tag)`, `list_active_by_owner(node_id)`.
+
+**`DuplicateFlagRepository`** (built)
+
+- `replace(item_id, version_tag, flags) -> None`, `list_by_version(item_id, version_tag)`.
+
+Overlap candidates are found lexically, from the word shingles of the Node's active chunks (ADR 0010). Embedding similarity over the vector index can be added as a second source of chunk scores in phase 8. Depends on open question 5 (who owns an item) and open question 4 (no equipment lookup is added).
 
 ### RAG Core
 
@@ -496,12 +514,12 @@ Rules for all services:
 
 ### `DuplicateDetector`
 
-- Context: Knowledge Management. Spec §7.7, §7.2 step 7.
-- Input: a candidate item (content hash, normalized text hash, `MetadataRecord`) and, for each existing item of the same Node, the item's hashes and the chunk-level `SimilarityScore`s between the two.
-- Output: a list of flags. Each flag has a kind (exact, near, overlap of parts, same content with different metadata), the id of the existing item and the score. An empty list means no duplicate.
-- Rule: equal file hash is an exact duplicate. Equal normalized text hash is a near duplicate. A share of chunks above the similarity threshold is an overlap. Equal text with different `MetadataRecord` is a metadata variant. Scores in a gray band are marked "ambiguous", so the application layer can ask the LLM for the final check (§7.7).
-- Port: none inside the service. The application layer needs an `Embedder`, a chunk similarity search and an LLM for the ambiguous band, and passes the results in.
-- It never decides what to do with a duplicate. That is open question 6.
+- Context: Knowledge Management. Spec §7.7, §7.2 step 7. Built in `knowledge/domain/duplicate_detection.py` (ADR 0010).
+- Input: a candidate `VersionFingerprint` and `DuplicateComparison`s: for each existing version of the same Node, its fingerprint and, for each candidate chunk, the share of the chunk's shingles found in that version.
+- Output: `DuplicateFlag`s, at most one per existing item (the strongest), ordered by item id. An empty list means no duplicate.
+- Rule: equal file hash is an exact duplicate. Equal normalized text hash is a near duplicate, or a metadata variant when the `MetadataRecord` differs. When at least a minimum share of chunks reaches the overlap similarity, it is an overlap; when that share is only reached in the gray band below, the overlap is marked ambiguous, so the application layer can later ask the LLM for the final check (§7.7). The candidate's own item and other Nodes' items are skipped.
+- Port: none inside the service. The thresholds come from `Settings`. The application layer computes the similarities (lexically for now) and passes them in.
+- It never decides what to do with a duplicate. That is open question 6; until then both items are kept.
 
 ### `SimilarIssueDetector`
 

@@ -1,5 +1,6 @@
 """KnowledgeIngestions and their outbox messages in the local Postgres database (ADR 0005)."""
 
+from collections.abc import Sequence
 from datetime import datetime
 
 import psycopg
@@ -11,24 +12,30 @@ from offline_rag.knowledge.application.errors import (
 )
 from offline_rag.knowledge.application.ports import KnowledgeIngestionSummary, OutboxMessage
 from offline_rag.knowledge.domain.document_format import DocumentFormat
+from offline_rag.knowledge.domain.duplicate_detection import DuplicateFlag
 from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus, KnowledgeIngestion
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
 from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.knowledge.infrastructure.postgres_database import PostgresDatabase
+from offline_rag.knowledge.infrastructure.postgres_duplicate_flag_repository import (
+    insert_duplicate_flags,
+)
 from offline_rag.knowledge.infrastructure.postgres_knowledge_item_repository import (
     insert_knowledge_item,
+    insert_newest_version,
 )
 from offline_rag.knowledge.infrastructure.postgres_outbox import insert_outbox_message
 
 _UPSERT_INGESTION = """
 INSERT INTO knowledge_ingestion
-    (ingestion_id, item_id, version_tag, status, attempts, blocks_for_review, failure_code,
-     failure_detail, request_id, created_at, updated_at)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    (ingestion_id, item_id, version_tag, status, attempts, blocks_for_review, chunk_count,
+     failure_code, failure_detail, request_id, created_at, updated_at)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (ingestion_id) DO UPDATE SET
     status = EXCLUDED.status,
     attempts = EXCLUDED.attempts,
     blocks_for_review = EXCLUDED.blocks_for_review,
+    chunk_count = EXCLUDED.chunk_count,
     failure_code = EXCLUDED.failure_code,
     failure_detail = EXCLUDED.failure_detail,
     updated_at = EXCLUDED.updated_at
@@ -36,7 +43,7 @@ ON CONFLICT (ingestion_id) DO UPDATE SET
 
 _SELECT_STALLED = """
 SELECT * FROM knowledge_ingestion AS ingestion
-WHERE ingestion.status IN ('queued', 'reading_pages')
+WHERE ingestion.status IN ('queued', 'reading_pages', 'chunking')
     AND ingestion.updated_at < %(stalled_since)s
     AND NOT EXISTS (
         SELECT 1 FROM outbox_message AS message
@@ -48,7 +55,10 @@ LIMIT %(limit)s
 """
 
 _SELECT_RECENT = """
-SELECT ingestion.*, version.source_file_name, version.document_format
+SELECT ingestion.*, version.source_file_name, version.document_format,
+    (SELECT count(*) FROM knowledge_duplicate_flag AS flag
+     WHERE flag.item_id = ingestion.item_id AND flag.version_tag = ingestion.version_tag)
+        AS duplicate_flag_count
 FROM knowledge_ingestion AS ingestion
 JOIN knowledge_version AS version USING (item_id, version_tag)
 ORDER BY ingestion.created_at DESC, ingestion.ingestion_id DESC
@@ -63,15 +73,38 @@ class PostgresKnowledgeIngestionRepository:
         self._database = database
 
     def add_with_item(
-        self, item: KnowledgeItem, ingestion: KnowledgeIngestion, message: OutboxMessage
+        self,
+        item: KnowledgeItem,
+        ingestion: KnowledgeIngestion,
+        message: OutboxMessage,
+        duplicate_flags: Sequence[DuplicateFlag] = (),
     ) -> None:
-        """Store a new item, its first ingestion and the message, in one transaction.
+        """Store a new item, its first ingestion, the message and the flags in one transaction.
 
         Raises:
             KnowledgeStorageError: The database cannot be written, or an id is taken.
         """
         with self._database.transaction("add_with_item") as connection:
             insert_knowledge_item(connection, item)
+            insert_duplicate_flags(connection, duplicate_flags)
+            _write(connection, ingestion, message)
+
+    def add_with_version(
+        self,
+        item: KnowledgeItem,
+        ingestion: KnowledgeIngestion,
+        message: OutboxMessage,
+        duplicate_flags: Sequence[DuplicateFlag] = (),
+    ) -> None:
+        """Store an item's newest version as active, its ingestion, message and flags together.
+
+        Raises:
+            KnowledgeStorageError: The database cannot be written, or the version
+                tag is taken because another version was published at the same time.
+        """
+        with self._database.transaction("add_with_version") as connection:
+            insert_newest_version(connection, item)
+            insert_duplicate_flags(connection, duplicate_flags)
             _write(connection, ingestion, message)
 
     def add(self, ingestion: KnowledgeIngestion, message: OutboxMessage) -> None:
@@ -134,13 +167,13 @@ class PostgresKnowledgeIngestionRepository:
         with self._database.transaction("find_running_ingestion") as connection:
             row = connection.execute(
                 "SELECT * FROM knowledge_ingestion WHERE item_id = %s AND version_tag = %s"
-                " AND status IN ('queued', 'extracting', 'reading_pages')",
+                " AND status IN ('queued', 'extracting', 'reading_pages', 'chunking')",
                 (item_id, version_tag.value),
             ).fetchone()
         return _ingestion_from_row(row) if row else None
 
     def find_stalled(self, stalled_since: datetime, limit: int) -> list[KnowledgeIngestion]:
-        """Return QUEUED or READING_PAGES ingestions with no news since `stalled_since`.
+        """Return QUEUED, READING_PAGES or CHUNKING ingestions with no news since `stalled_since`.
 
         Raises:
             KnowledgeStorageError: The database cannot be read.
@@ -164,6 +197,7 @@ class PostgresKnowledgeIngestionRepository:
                 ingestion=_ingestion_from_row(row),
                 source_file_name=row["source_file_name"],
                 document_format=DocumentFormat(row["document_format"]),
+                duplicate_flag_count=row["duplicate_flag_count"],
             )
             for row in rows
         ]
@@ -183,6 +217,7 @@ def _write(
             ingestion.status.value,
             ingestion.attempts,
             ingestion.blocks_for_review,
+            ingestion.chunk_count,
             ingestion.failure_code,
             ingestion.failure_detail,
             ingestion.request_id,
@@ -205,6 +240,7 @@ def _ingestion_from_row(row: DictRow) -> KnowledgeIngestion:
         updated_at=row["updated_at"],
         request_id=row["request_id"],
         blocks_for_review=row["blocks_for_review"],
+        chunk_count=row["chunk_count"],
         failure_code=row["failure_code"],
         failure_detail=row["failure_detail"],
     )

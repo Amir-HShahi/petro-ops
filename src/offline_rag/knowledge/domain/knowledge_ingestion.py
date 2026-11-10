@@ -14,25 +14,34 @@ class IngestionStatus(StrEnum):
     QUEUED = "queued"
     EXTRACTING = "extracting"
     READING_PAGES = "reading_pages"
+    CHUNKING = "chunking"
     COMPLETED = "completed"
     FAILED = "failed"
 
 
 _RUNNING = frozenset(
-    {IngestionStatus.QUEUED, IngestionStatus.EXTRACTING, IngestionStatus.READING_PAGES}
+    {
+        IngestionStatus.QUEUED,
+        IngestionStatus.EXTRACTING,
+        IngestionStatus.READING_PAGES,
+        IngestionStatus.CHUNKING,
+    }
 )
 
 
 @dataclass(kw_only=True)
 class KnowledgeIngestion:
-    """One run of extraction, and of LVM page reading when needed, for one version.
+    """One run of extraction, LVM page reading when needed, and chunking, for one version.
 
-    Messages can arrive twice, so a step may start again from the state it set
-    itself: extraction from EXTRACTING, page reading from READING_PAGES.
+    The steps run in this order: QUEUED, EXTRACTING, READING_PAGES (only for PDF
+    pages without a text layer), CHUNKING, then COMPLETED. Messages can arrive
+    twice, so a step may start again from the state it set itself: extraction
+    from EXTRACTING, page reading from READING_PAGES, chunking from CHUNKING.
 
     Attributes:
         attempts: How many times a step of this run has started.
         blocks_for_review: Blocks a person must check; set when COMPLETED.
+        chunk_count: How many KnowledgeChunks the version was cut into; set when COMPLETED.
         failure_code: The error code that ended the run; set when FAILED.
         failure_detail: A short description of that error; set when FAILED.
         request_id: The request that started the run, for tracing logs.
@@ -47,6 +56,7 @@ class KnowledgeIngestion:
     updated_at: datetime
     request_id: str | None = None
     blocks_for_review: int | None = None
+    chunk_count: int | None = None
     failure_code: str | None = None
     failure_detail: str | None = None
 
@@ -106,16 +116,36 @@ class KnowledgeIngestion:
         self.attempts += 1
         self.updated_at = now
 
-    def complete(self, *, blocks_for_review: int, now: datetime) -> None:
-        """End the run with all content stored.
+    def wait_for_chunking(self, now: datetime) -> None:
+        """Mark that the content is stored and waits for a chunking worker.
 
         Raises:
             InvalidIngestionTransitionError: The run is not extracting or reading pages.
         """
         self._move(
-            {IngestionStatus.EXTRACTING, IngestionStatus.READING_PAGES}, IngestionStatus.COMPLETED
+            {IngestionStatus.EXTRACTING, IngestionStatus.READING_PAGES}, IngestionStatus.CHUNKING
         )
+        self.updated_at = now
+
+    def start_chunking(self, now: datetime) -> None:
+        """Mark that a chunking worker started cutting the content into chunks.
+
+        Raises:
+            InvalidIngestionTransitionError: The run is not CHUNKING.
+        """
+        self._move({IngestionStatus.CHUNKING}, IngestionStatus.CHUNKING)
+        self.attempts += 1
+        self.updated_at = now
+
+    def complete(self, *, blocks_for_review: int, chunk_count: int, now: datetime) -> None:
+        """End the run with the content and its chunks stored.
+
+        Raises:
+            InvalidIngestionTransitionError: The run is not CHUNKING.
+        """
+        self._move({IngestionStatus.CHUNKING}, IngestionStatus.COMPLETED)
         self.blocks_for_review = blocks_for_review
+        self.chunk_count = chunk_count
         self.updated_at = now
 
     def fail(self, *, failure_code: str, failure_detail: str, now: datetime) -> None:

@@ -1,6 +1,7 @@
 """In-memory fakes of the Knowledge Management ports, for unit tests."""
 
 import copy
+import math
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 
@@ -17,7 +18,9 @@ from offline_rag.knowledge.application.ports import (
     PageReading,
 )
 from offline_rag.knowledge.domain.document_format import DocumentFormat
+from offline_rag.knowledge.domain.duplicate_detection import DuplicateFlag, VersionFingerprint
 from offline_rag.knowledge.domain.extracted_content import ExtractedContent
+from offline_rag.knowledge.domain.knowledge_chunk import KnowledgeChunk
 from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus, KnowledgeIngestion
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
 from offline_rag.knowledge.domain.version_tag import VersionTag
@@ -42,26 +45,63 @@ class InMemoryKnowledgeItemRepository:
         self.items[item.item_id] = item
 
 
+class InMemoryDuplicateFlagRepository:
+    """Keeps flags in a dict by item id and version tag."""
+
+    def __init__(self) -> None:
+        self.flags: dict[tuple[str, VersionTag], list[DuplicateFlag]] = {}
+
+    def replace(
+        self, item_id: str, version_tag: VersionTag, flags: Sequence[DuplicateFlag]
+    ) -> None:
+        self.flags[(item_id, version_tag)] = sorted(flags, key=lambda f: f.existing_item_id)
+
+    def list_by_version(self, item_id: str, version_tag: VersionTag) -> list[DuplicateFlag]:
+        return list(self.flags.get((item_id, version_tag), []))
+
+
 class InMemoryKnowledgeIngestionRepository:
     """Keeps copies of ingestions by id, every outbox message in order, and publish times.
 
-    Items given with a new ingestion go into the item repository, as the real
-    adapter writes both in one transaction. `InMemoryOutbox` shares the messages.
+    Items and flags given with a new ingestion go into the item and flag
+    repositories, as the real adapter writes them in one transaction.
+    `InMemoryOutbox` shares the messages.
     A save that expects a status fails for ids in `taken_by_another_worker`, as if
     another worker had started that step first.
     """
 
-    def __init__(self, item_repository: InMemoryKnowledgeItemRepository) -> None:
+    def __init__(
+        self,
+        item_repository: InMemoryKnowledgeItemRepository,
+        flag_repository: InMemoryDuplicateFlagRepository | None = None,
+    ) -> None:
         self.item_repository = item_repository
+        self.flag_repository = flag_repository or InMemoryDuplicateFlagRepository()
         self.ingestions: dict[str, KnowledgeIngestion] = {}
         self.messages: list[OutboxMessage] = []
         self.published_at: dict[str, datetime] = {}
         self.taken_by_another_worker: set[str] = set()
 
     def add_with_item(
-        self, item: KnowledgeItem, ingestion: KnowledgeIngestion, message: OutboxMessage
+        self,
+        item: KnowledgeItem,
+        ingestion: KnowledgeIngestion,
+        message: OutboxMessage,
+        duplicate_flags: Sequence[DuplicateFlag] = (),
     ) -> None:
         self.item_repository.add(item)
+        self.flag_repository.replace(item.item_id, ingestion.version_tag, duplicate_flags)
+        self.add(ingestion, message)
+
+    def add_with_version(
+        self,
+        item: KnowledgeItem,
+        ingestion: KnowledgeIngestion,
+        message: OutboxMessage,
+        duplicate_flags: Sequence[DuplicateFlag] = (),
+    ) -> None:
+        self.item_repository.add(item)
+        self.flag_repository.replace(item.item_id, ingestion.version_tag, duplicate_flags)
         self.add(ingestion, message)
 
     def add(self, ingestion: KnowledgeIngestion, message: OutboxMessage) -> None:
@@ -109,7 +149,8 @@ class InMemoryKnowledgeIngestionRepository:
     def find_stalled(self, stalled_since: datetime, limit: int) -> list[KnowledgeIngestion]:
         def is_stalled(ingestion: KnowledgeIngestion) -> bool:
             return (
-                ingestion.status in {IngestionStatus.QUEUED, IngestionStatus.READING_PAGES}
+                ingestion.status
+                in {IngestionStatus.QUEUED, IngestionStatus.READING_PAGES, IngestionStatus.CHUNKING}
                 and ingestion.updated_at < stalled_since
                 and all(
                     message.outbox_id in self.published_at and message.created_at < stalled_since
@@ -139,6 +180,9 @@ class InMemoryKnowledgeIngestionRepository:
                     ingestion=copy.deepcopy(ingestion),
                     source_file_name=version.source_file_name,
                     document_format=version.document_format,
+                    duplicate_flag_count=len(
+                        self.flag_repository.list_by_version(item.item_id, version.version_tag)
+                    ),
                 )
             )
         return summaries
@@ -357,3 +401,84 @@ class FakeTableOcr:
 
     def release(self) -> None:
         self.calls.append("ocr released")
+
+
+class FakeTokenizer:
+    """Counts one token per four characters, rounded up, like the real estimate."""
+
+    def count_tokens(self, text: str) -> int:
+        return math.ceil(len(text) / 4)
+
+
+class InMemoryKnowledgeChunkRepository:
+    """Keeps chunks by item id and version tag; reads the active version from the items."""
+
+    def __init__(self, item_repository: InMemoryKnowledgeItemRepository) -> None:
+        self.item_repository = item_repository
+        self.chunks: dict[tuple[str, VersionTag], list[KnowledgeChunk]] = {}
+
+    def replace(
+        self, item_id: str, version_tag: VersionTag, chunks: Sequence[KnowledgeChunk]
+    ) -> None:
+        self.chunks[(item_id, version_tag)] = list(chunks)
+
+    def list_by_version(self, item_id: str, version_tag: VersionTag) -> list[KnowledgeChunk]:
+        return list(self.chunks.get((item_id, version_tag), []))
+
+    def list_active_by_owner(self, owner_node_id: NodeIdentifier) -> list[KnowledgeChunk]:
+        return [
+            chunk
+            for item in sorted(self.item_repository.items.values(), key=lambda i: i.item_id)
+            if item.owner_node_id == owner_node_id
+            for chunk in self.chunks.get((item.item_id, item.active_version.version_tag), [])
+        ]
+
+
+class InMemoryVersionFingerprintRepository:
+    """Builds fingerprints from the stored items, with the text hashes saved here."""
+
+    def __init__(self, item_repository: InMemoryKnowledgeItemRepository) -> None:
+        self.item_repository = item_repository
+        self.text_hashes: dict[tuple[str, VersionTag], str | None] = {}
+
+    def save_text_hash(
+        self, item_id: str, version_tag: VersionTag, normalized_text_hash: str | None
+    ) -> None:
+        self.text_hashes[(item_id, version_tag)] = normalized_text_hash
+
+    def find_by_content_hash(
+        self, owner_node_id: NodeIdentifier, content_hash: str
+    ) -> list[VersionFingerprint]:
+        return [
+            found
+            for found in self._all(owner_node_id, active_only=False)
+            if found.content_hash == content_hash
+        ]
+
+    def find_by_text_hash(
+        self, owner_node_id: NodeIdentifier, normalized_text_hash: str
+    ) -> list[VersionFingerprint]:
+        return [
+            found
+            for found in self._all(owner_node_id, active_only=False)
+            if found.normalized_text_hash == normalized_text_hash
+        ]
+
+    def list_active_by_owner(self, owner_node_id: NodeIdentifier) -> list[VersionFingerprint]:
+        return self._all(owner_node_id, active_only=True)
+
+    def _all(self, owner_node_id: NodeIdentifier, *, active_only: bool) -> list[VersionFingerprint]:
+        return [
+            VersionFingerprint(
+                item_id=item.item_id,
+                version_tag=version.version_tag,
+                owner_node_id=item.owner_node_id,
+                content_hash=version.content_hash,
+                normalized_text_hash=self.text_hashes.get((item.item_id, version.version_tag)),
+                metadata=version.metadata,
+            )
+            for item in sorted(self.item_repository.items.values(), key=lambda i: i.item_id)
+            if item.owner_node_id == owner_node_id
+            for version in item.versions
+            if not active_only or version == item.active_version
+        ]

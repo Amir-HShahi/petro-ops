@@ -209,6 +209,21 @@ def test_page_reading_ingestion_is_stalled_when_vision_message_brought_no_change
     assert repository.find_stalled(STALLED_SINCE, limit=10) == [ingestion]
 
 
+def test_chunking_ingestion_is_stalled_when_chunking_message_brought_no_change(
+    repository: PostgresKnowledgeIngestionRepository, outbox: PostgresOutbox
+):
+    ingestion = _queued_long_ago(repository, outbox)
+    ingestion.start_extraction(LONG_AGO)
+    ingestion.wait_for_chunking(LONG_AGO)
+    chunking = OutboxMessage(
+        outbox_id="m2", ingestion_id="ing-1", lane=IngestionLane.CHUNKING, created_at=LONG_AGO
+    )
+    repository.save(ingestion, chunking)
+    outbox.mark_published("m2", LONG_AGO)
+
+    assert repository.find_stalled(STALLED_SINCE, limit=10) == [ingestion]
+
+
 def test_ingestion_is_saved_when_its_status_is_still_the_expected_one(
     repository: PostgresKnowledgeIngestionRepository,
 ):
@@ -248,7 +263,8 @@ def test_recent_ingestions_come_newest_first_with_their_file_when_found(
     repository.add_with_item(_item(), _ingestion(), _message("m1"))
     ended = repository.get_by_id("ing-1")
     ended.start_extraction(NOW)
-    ended.complete(blocks_for_review=2, now=NOW)
+    ended.wait_for_chunking(NOW)
+    ended.complete(blocks_for_review=2, chunk_count=3, now=NOW)
     repository.save(ended)
     later = KnowledgeIngestion.queue(
         ingestion_id="ing-2", item_id="ki-1", version_tag=V1, queued_at=NOW + timedelta(minutes=1)

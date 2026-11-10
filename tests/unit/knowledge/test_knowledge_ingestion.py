@@ -28,9 +28,15 @@ def _reading_pages() -> KnowledgeIngestion:
     return ingestion
 
 
-def _completed() -> KnowledgeIngestion:
+def _chunking() -> KnowledgeIngestion:
     ingestion = _extracting()
-    ingestion.complete(blocks_for_review=0, now=NOW)
+    ingestion.wait_for_chunking(NOW)
+    return ingestion
+
+
+def _completed() -> KnowledgeIngestion:
+    ingestion = _chunking()
+    ingestion.complete(blocks_for_review=0, chunk_count=0, now=NOW)
     return ingestion
 
 
@@ -71,19 +77,41 @@ def test_page_reading_counts_an_attempt_when_it_starts():
 
 
 @pytest.mark.parametrize("build", [_extracting, _reading_pages])
-def test_run_completes_with_review_count_when_a_step_finishes(build):  # type: ignore[no-untyped-def]
+def test_run_waits_for_chunking_when_content_is_stored(build):  # type: ignore[no-untyped-def]
     ingestion = build()
 
-    ingestion.complete(blocks_for_review=3, now=LATER)
+    ingestion.wait_for_chunking(LATER)
 
-    assert (ingestion.status, ingestion.blocks_for_review, ingestion.is_running) == (
-        IngestionStatus.COMPLETED,
-        3,
-        False,
+    assert (ingestion.status, ingestion.is_running, ingestion.updated_at) == (
+        IngestionStatus.CHUNKING,
+        True,
+        LATER,
     )
 
 
-@pytest.mark.parametrize("build", [_queued, _extracting, _reading_pages])
+def test_chunking_counts_an_attempt_when_it_starts_again_after_a_redelivery():
+    ingestion = _chunking()
+    ingestion.start_chunking(NOW)
+
+    ingestion.start_chunking(LATER)
+
+    assert (ingestion.status, ingestion.attempts) == (IngestionStatus.CHUNKING, 3)
+
+
+def test_run_completes_with_review_and_chunk_counts_when_chunking_finishes():
+    ingestion = _chunking()
+
+    ingestion.complete(blocks_for_review=3, chunk_count=7, now=LATER)
+
+    assert (
+        ingestion.status,
+        ingestion.blocks_for_review,
+        ingestion.chunk_count,
+        ingestion.is_running,
+    ) == (IngestionStatus.COMPLETED, 3, 7, False)
+
+
+@pytest.mark.parametrize("build", [_queued, _extracting, _reading_pages, _chunking])
 def test_run_records_the_error_when_it_fails_while_running(build):  # type: ignore[no-untyped-def]
     ingestion = build()
 
@@ -99,13 +127,21 @@ def test_run_records_the_error_when_it_fails_while_running(build):  # type: igno
 @pytest.mark.parametrize(
     ("build", "move"),
     [
-        (_queued, lambda i: i.complete(blocks_for_review=0, now=LATER)),
+        (_queued, lambda i: i.complete(blocks_for_review=0, chunk_count=0, now=LATER)),
         (_queued, lambda i: i.wait_for_page_reading(LATER)),
         (_queued, lambda i: i.start_page_reading(LATER)),
+        (_queued, lambda i: i.wait_for_chunking(LATER)),
+        (_queued, lambda i: i.start_chunking(LATER)),
+        (_extracting, lambda i: i.complete(blocks_for_review=0, chunk_count=0, now=LATER)),
+        (_extracting, lambda i: i.start_chunking(LATER)),
         (_reading_pages, lambda i: i.start_extraction(LATER)),
+        (_reading_pages, lambda i: i.complete(blocks_for_review=0, chunk_count=0, now=LATER)),
+        (_chunking, lambda i: i.start_extraction(LATER)),
+        (_chunking, lambda i: i.wait_for_page_reading(LATER)),
         (_completed, lambda i: i.start_extraction(LATER)),
+        (_completed, lambda i: i.start_chunking(LATER)),
         (_completed, lambda i: i.fail(failure_code="X", failure_detail="x", now=LATER)),
-        (_failed, lambda i: i.complete(blocks_for_review=0, now=LATER)),
+        (_failed, lambda i: i.complete(blocks_for_review=0, chunk_count=0, now=LATER)),
     ],
 )
 def test_status_is_kept_when_a_move_is_not_allowed(build, move):  # type: ignore[no-untyped-def]
