@@ -121,11 +121,13 @@ Log lines are JSON on stderr.
 
 Open <http://127.0.0.1:8000/pipeline> while the API runs. The page needs no internet. It shows:
 
-- a form to submit a file for a registered Node;
-- the outbox and the five queues (`ingestion`, `ingestion.vision`, `ingestion.chunking`, `ingestion.retry`, `ingestion.dlq`), each with messages waiting (blue squares), messages a worker holds and has not acked (amber squares) and consumers;
-- the 20 most recent ingestions as cards in the column of their status (Queued, Extracting, Reading pages, Chunking, Completed, Failed), with their chunk count and duplicate flag count. Click a completed card to see its duplicate flags and its blocks, with the page or heading path, table or text, and the review flag.
+- a "Submit a file" button that opens the form to submit a file for a registered Node;
+- the outbox and the five queues (`ingestion`, `ingestion.vision`, `ingestion.chunking`, `ingestion.retry`, `ingestion.dlq`) as a pipeline graph. Each node has an icon (spinning while a worker holds a message, a clock while messages wait, a red cross when the dead-letter queue is not empty) and the counts of messages waiting, messages a worker holds and has not acked, and consumers;
+- the 20 most recent ingestions as rows, newest first, with a status icon, a track of the four stages (Queued, Extracting, Reading pages, Chunking), the time since the last update and the duration, plus the chunk count and duplicate flag count. The buttons above the list filter by All, In progress, Completed and Failed. Click a completed row to see its duplicate flags and its blocks, with the page or heading path, table or text, and the review flag.
 
-The page polls every second. If RabbitMQ's management API is down, the queue panel shows `KNOWLEDGE_QUEUE_MONITOR_UNAVAILABLE` and the cards keep updating.
+The page follows the light or dark setting of your system. The three buttons at the top right force Light, Dark or System, and the browser remembers the choice.
+
+The page polls every second. If RabbitMQ's management API is down, the queue panel shows `KNOWLEDGE_QUEUE_MONITOR_UNAVAILABLE` and the ingestions keep updating.
 
 ## Two-minute demo
 
@@ -147,11 +149,11 @@ printf 'PK\003\004this is not a real docx' > /tmp/broken_report.docx
    - `fixtures/docs/synthetic/shift_report_sp12_2026_08_04.docx` (`shift_report`)
    - `fixtures/docs/synthetic/project_report_sp12_riser_r3_integrity.pdf` (`project_report`)
 
-   Each card appears under Queued. The outbox count goes up, then the relay moves each message to `ingestion`, which shows 3 waiting. Point out that the files are safe in Postgres and the broker even though no worker runs.
-2. **Queue drains (30 s).** In terminal 2, run `uv run knowledge worker run --lane text`. `ingestion` shows 1 consumer and 1 in progress. The cards move to Extracting, Chunking and then Completed one by one, and the queue drains to 0. Click a completed card to show its blocks: headings for the DOCX files, page numbers and tables for the PDF.
-3. **Vision lane (about a minute per page).** Submit `fixtures/docs/cases/scanned_sp12_riser_r3_baseline_2021.pdf` (`inspection_report`). The text worker finds pages without a text layer, so the card moves Extracting → Reading pages and one message appears in `ingestion.vision`, held by its single consumer. When Gemma and `glm-ocr` are done, the card passes Chunking and is Completed with its `blocks_for_review`. Click it: the blocks read by the LVM carry an LVM badge, and tables the two models read differently are flagged for review.
-4. **Duplicates (20 s).** Submit `fixtures/docs/cases/cv_moradi_final.docx` after `fixtures/docs/synthetic/profile_leila_moradi.docx`, both for `sp12_inspection_team`. The second card shows `1 duplicate flag` as soon as it is submitted; open it when completed to see `exact` and the first item's id. Both items are kept. The same works for overlap: `synthetic/inspection_sp12_riser_r3_2026_v1.docx` then `cases/shift_report_sp12_2026_09_27.docx`, both for one Node, gives an `overlap` flag.
-5. **A file that fails (10 s).** Submit `/tmp/broken_report.docx`. The card moves to Failed with `KNOWLEDGE_EXTRACTION_FAILED` after one attempt. A broken file is a domain error, so it is not retried and nothing lands in `ingestion.retry` or `ingestion.dlq`. A file in another format, such as a `.txt`, is refused by the form itself with `KNOWLEDGE_UNSUPPORTED_FORMAT` and never becomes a card.
+   Each ingestion appears as a Queued row. The outbox count goes up, then the relay moves each message to `ingestion`, which shows 3 waiting. Point out that the files are safe in Postgres and the broker even though no worker runs.
+2. **Queue drains (30 s).** In terminal 2, run `uv run knowledge worker run --lane text`. `ingestion` shows 1 consumer and 1 in progress. The rows move to Extracting, Chunking and then Completed one by one, and the queue drains to 0. Click a completed row to show its blocks: headings for the DOCX files, page numbers and tables for the PDF.
+3. **Vision lane (about a minute per page).** Submit `fixtures/docs/cases/scanned_sp12_riser_r3_baseline_2021.pdf` (`inspection_report`). The text worker finds pages without a text layer, so the row moves Extracting → Reading pages and one message appears in `ingestion.vision`, held by its single consumer. When Gemma and `glm-ocr` are done, the row passes Chunking and is Completed with its `blocks_for_review`. Click it: the blocks read by the LVM carry an LVM badge, and tables the two models read differently are flagged for review.
+4. **Duplicates (20 s).** Submit `fixtures/docs/cases/cv_moradi_final.docx` after `fixtures/docs/synthetic/profile_leila_moradi.docx`, both for `sp12_inspection_team`. The second row shows `1 duplicate flag` as soon as it is submitted; open it when completed to see `exact` and the first item's id. Both items are kept. The same works for overlap: `synthetic/inspection_sp12_riser_r3_2026_v1.docx` then `cases/shift_report_sp12_2026_09_27.docx`, both for one Node, gives an `overlap` flag.
+5. **A file that fails (10 s).** Submit `/tmp/broken_report.docx`. The row turns Failed with `KNOWLEDGE_EXTRACTION_FAILED` after one attempt. A broken file is a domain error, so it is not retried and nothing lands in `ingestion.retry` or `ingestion.dlq`. A file in another format, such as a `.txt`, is refused by the form itself with `KNOWLEDGE_UNSUPPORTED_FORMAT` and never becomes a row.
 
 ## Use it from the CLI
 

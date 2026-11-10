@@ -368,19 +368,32 @@ def test_pipeline_page_is_served_with_its_assets_when_opened(client: TestClient)
     page = client.get("/pipeline")
     css = client.get("/pipeline/assets/pipeline.css")
     script = client.get("/pipeline/assets/pipeline.js")
+    theme_script = client.get("/pipeline/assets/theme.js")
 
     assert page.status_code == 200
     assert page.headers["content-type"].startswith("text/html")
     assert "/pipeline/assets/pipeline.js" in page.text
+    assert "/pipeline/assets/theme.js" in page.text
     assert css.status_code == 200
     assert script.status_code == 200
+    assert theme_script.status_code == 200
+
+
+def test_pipeline_page_offers_light_dark_and_system_themes_when_opened(client: TestClient):
+    page = client.get("/pipeline").text
+
+    for choice in ("light", "dark", "system"):
+        assert f'data-theme-choice="{choice}"' in page
 
 
 def test_pipeline_page_loads_nothing_from_other_hosts_when_opened(client: TestClient):
-    sources = [
-        client.get(path).text
-        for path in ("/pipeline", "/pipeline/assets/pipeline.css", "/pipeline/assets/pipeline.js")
-    ]
+    paths = (
+        "/pipeline",
+        "/pipeline/assets/pipeline.css",
+        "/pipeline/assets/pipeline.js",
+        "/pipeline/assets/theme.js",
+    )
+    sources = [client.get(path).text for path in paths]
 
     assert not any("http://" in source or "https://" in source for source in sources)
 
