@@ -9,6 +9,7 @@ from tests.fakes.knowledge import (
     InMemoryKnowledgeIngestionRepository,
     InMemoryKnowledgeItemRepository,
     InMemorySourceFileStore,
+    InMemoryVersionFingerprintRepository,
 )
 
 from offline_rag.knowledge.application.commands import SubmitKnowledgeItem
@@ -23,13 +24,23 @@ from offline_rag.knowledge.application.submit_knowledge_item import (
     SubmitKnowledgeItemHandler,
 )
 from offline_rag.knowledge.domain.document_format import DocumentFormat
+from offline_rag.knowledge.domain.duplicate_detection import (
+    DuplicateDetector,
+    DuplicateFlag,
+    DuplicateKind,
+)
 from offline_rag.knowledge.domain.errors import (
     EmptySourceFileError,
     UnsupportedDocumentFormatError,
 )
-from offline_rag.knowledge.domain.events import KnowledgeItemSubmitted, MetadataRecorded
+from offline_rag.knowledge.domain.events import (
+    DuplicateDetected,
+    KnowledgeItemSubmitted,
+    MetadataRecorded,
+)
 from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus
 from offline_rag.knowledge.domain.knowledge_scope import ConfidentialityLevel, KnowledgeScope
+from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
 
@@ -68,6 +79,10 @@ def handler(
         ingestion_repository=ingestions,
         node_directory=FakeNodeDirectory(["sp12_inspection_team", "platform_sp12"]),
         source_file_store=file_store,
+        fingerprint_repository=InMemoryVersionFingerprintRepository(ingestions.item_repository),
+        detector=DuplicateDetector(
+            overlap_chunk_similarity=0.4, ambiguous_from_similarity=0.25, min_chunk_share=0.2
+        ),
         clock=FakeClock(),
         id_generator=FakeIdGenerator(),
         event_publisher=publisher,
@@ -228,3 +243,54 @@ def test_file_is_accepted_when_it_is_exactly_the_size_limit(
     item_id = handler.submit(_command(content=content)).item_id
 
     assert item_id in repository.items
+
+
+def test_second_item_is_flagged_as_exact_duplicate_and_still_created_when_same_file_is_submitted(
+    handler: SubmitKnowledgeItemHandler,
+    repository: InMemoryKnowledgeItemRepository,
+    ingestions: InMemoryKnowledgeIngestionRepository,
+):
+    first = handler.submit(_command())
+
+    second = handler.submit(_command(file_name="cv_moradi_final.pdf"))
+
+    assert second.item_id in repository.items
+    assert ingestions.flag_repository.list_by_version(second.item_id, VersionTag("v1")) == [
+        DuplicateFlag(
+            item_id=second.item_id,
+            version_tag=VersionTag("v1"),
+            kind=DuplicateKind.EXACT,
+            existing_item_id=first.item_id,
+            existing_version_tag=VersionTag("v1"),
+            score=1.0,
+        )
+    ]
+    assert ingestions.flag_repository.list_by_version(first.item_id, VersionTag("v1")) == []
+
+
+def test_duplicate_detected_is_published_after_the_item_events_when_same_file_is_submitted(
+    handler: SubmitKnowledgeItemHandler, publisher: InMemoryEventPublisher
+):
+    first = handler.submit(_command())
+    publisher.events.clear()
+
+    handler.submit(_command())
+
+    assert [type(event) for event in publisher.events] == [
+        KnowledgeItemSubmitted,
+        MetadataRecorded,
+        DuplicateDetected,
+    ]
+    detected = publisher.events[-1]
+    assert isinstance(detected, DuplicateDetected)
+    assert (detected.kind, detected.existing_item_id) == (DuplicateKind.EXACT, first.item_id)
+
+
+def test_no_flag_is_raised_when_same_file_is_submitted_for_another_node(
+    handler: SubmitKnowledgeItemHandler, ingestions: InMemoryKnowledgeIngestionRepository
+):
+    handler.submit(_command())
+
+    other = handler.submit(_command(owner=NodeIdentifier("platform_sp12")))
+
+    assert ingestions.flag_repository.list_by_version(other.item_id, VersionTag("v1")) == []

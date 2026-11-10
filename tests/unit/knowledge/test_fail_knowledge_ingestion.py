@@ -55,7 +55,8 @@ def test_completed_ingestion_stays_completed_when_a_late_failure_arrives(
 ):
     done = ingestions.get_by_id("ing-1")
     done.start_extraction(NOW)
-    done.complete(blocks_for_review=0, now=NOW)
+    done.wait_for_chunking(NOW)
+    done.complete(blocks_for_review=0, chunk_count=1, now=NOW)
     ingestions.save(done)
 
     result = handler.fail(COMMAND)

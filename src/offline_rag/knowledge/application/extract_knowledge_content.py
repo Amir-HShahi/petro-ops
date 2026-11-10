@@ -31,7 +31,7 @@ class ExtractKnowledgeContentHandler:
     """Reads the stored file of a version, parses it and stores the blocks.
 
     PDF pages without a text layer are handed to the vision worker; otherwise the
-    ingestion is completed here.
+    ingestion goes straight to the chunking worker.
     """
 
     def __init__(
@@ -56,7 +56,7 @@ class ExtractKnowledgeContentHandler:
             parser: Reads DOC, DOCX and PDF files.
             extracted_content_repository: Where the extracted blocks go.
             clock: Stamps the ingestion and the event.
-            id_generator: Names the message for the vision worker.
+            id_generator: Names the message for the next worker.
             event_publisher: Receives `KnowledgeContentExtracted`.
             min_page_text_chars: A PDF page with fewer non-space characters than
                 this has no usable text layer and is left for the LVM.
@@ -130,21 +130,16 @@ class ExtractKnowledgeContentHandler:
         )
         if pages_without_text:
             ingestion.wait_for_page_reading(self._clock.now())
-            self._ingestion_repository.save(
-                ingestion,
-                next_step_message(
-                    ingestion,
-                    IngestionLane.VISION,
-                    clock=self._clock,
-                    id_generator=self._id_generator,
-                ),
-            )
+            next_lane = IngestionLane.VISION
         else:
-            ingestion.complete(
-                blocks_for_review=sum(block.needs_human_review for block in content.blocks),
-                now=self._clock.now(),
-            )
-            self._ingestion_repository.save(ingestion)
+            ingestion.wait_for_chunking(self._clock.now())
+            next_lane = IngestionLane.CHUNKING
+        self._ingestion_repository.save(
+            ingestion,
+            next_step_message(
+                ingestion, next_lane, clock=self._clock, id_generator=self._id_generator
+            ),
+        )
 
         self._event_publisher.publish(
             [

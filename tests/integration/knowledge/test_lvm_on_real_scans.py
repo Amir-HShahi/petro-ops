@@ -12,7 +12,11 @@ from pathlib import Path
 import pytest
 
 from offline_rag.bootstrap import build_knowledge
-from offline_rag.knowledge.application.commands import ReadPagesWithLvm, SubmitKnowledgeItem
+from offline_rag.knowledge.application.commands import (
+    ExtractKnowledgeContent,
+    ReadPagesWithLvm,
+    SubmitKnowledgeItem,
+)
 from offline_rag.knowledge.domain.extracted_content import (
     TABLE_CELL_SEPARATOR,
     ContentSource,
@@ -20,7 +24,9 @@ from offline_rag.knowledge.domain.extracted_content import (
     normalize_extracted_text,
 )
 from offline_rag.knowledge.domain.knowledge_scope import ConfidentialityLevel, KnowledgeScope
-from offline_rag.knowledge.domain.version_tag import VersionTag
+from offline_rag.knowledge.infrastructure.postgres_extracted_content_repository import (
+    PostgresExtractedContentRepository,
+)
 from offline_rag.settings import Settings
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
 
@@ -70,12 +76,11 @@ def _settings(data_dir: Path, ollama_url: str) -> Settings:
 
 
 def _read(data_dir: Path, relative_path: str, page_numbers: tuple[int, ...]) -> ExtractedContent:
-    # Submitting with the model server out of reach (nothing listens on port 9)
-    # registers and extracts the file but skips the automatic LVM run over every
-    # page without text, so only the pages under test are read.
-    submitting = build_knowledge(_settings(data_dir, "http://127.0.0.1:9"))
+    # Submitting only queues the ingestion, so extracting it by hand leaves it waiting
+    # for page reading, and only the pages under test are read.
+    knowledge = build_knowledge(_settings(data_dir, OLLAMA_URL))
     path = ROOT / "fixtures" / "docs" / relative_path
-    item_id = submitting.submit_handler.submit(
+    receipt = knowledge.submit_handler.submit(
         SubmitKnowledgeItem(
             owner_node_id=NodeIdentifier("region_south_archive"),
             source_file_name=path.name,
@@ -83,9 +88,12 @@ def _read(data_dir: Path, relative_path: str, page_numbers: tuple[int, ...]) -> 
             scope=KnowledgeScope(confidentiality=ConfidentialityLevel.INTERNAL),
         )
     )
-    reading = build_knowledge(_settings(data_dir, OLLAMA_URL))
-    return reading.read_pages_handler.read(
-        ReadPagesWithLvm(item_id=item_id, version_tag=VersionTag("v1"), page_numbers=page_numbers)
+    knowledge.extract_handler.extract(ExtractKnowledgeContent(ingestion_id=receipt.ingestion_id))
+    knowledge.read_pages_handler.read(
+        ReadPagesWithLvm(ingestion_id=receipt.ingestion_id, page_numbers=page_numbers)
+    )
+    return PostgresExtractedContentRepository(knowledge.database).get(
+        receipt.item_id, receipt.version_tag
     )
 
 

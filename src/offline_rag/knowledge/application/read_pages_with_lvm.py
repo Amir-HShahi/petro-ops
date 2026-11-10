@@ -5,11 +5,14 @@ from collections.abc import Sequence
 import structlog
 
 from offline_rag.knowledge.application.commands import ReadPagesWithLvm
+from offline_rag.knowledge.application.ingestion_queueing import next_step_message
 from offline_rag.knowledge.application.ports import (
     LVM,
     Clock,
     EventPublisher,
     ExtractedContentRepository,
+    IdGenerator,
+    IngestionLane,
     KnowledgeIngestionRepository,
     KnowledgeItemRepository,
     PageReading,
@@ -22,7 +25,6 @@ from offline_rag.knowledge.domain.events import PagesReadWithLvm
 from offline_rag.knowledge.domain.extracted_content import (
     ContentBlock,
     ContentSource,
-    ExtractedContent,
 )
 from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus, KnowledgeIngestion
 from offline_rag.knowledge.domain.scanned_table_check import find_table_review_reason
@@ -50,6 +52,7 @@ class ReadPagesWithLvmHandler:
         lvm: LVM,
         table_ocr: TableOcr,
         clock: Clock,
+        id_generator: IdGenerator,
         event_publisher: EventPublisher,
         min_page_text_chars: int,
     ) -> None:
@@ -64,6 +67,7 @@ class ReadPagesWithLvmHandler:
             lvm: Reads text and tables from a page image.
             table_ocr: Reads tables a second time, to check the LVM.
             clock: Stamps the ingestion and the event.
+            id_generator: Names the message for the chunking worker.
             event_publisher: Receives `PagesReadWithLvm`.
             min_page_text_chars: Below this many characters a page has no text layer.
         """
@@ -75,11 +79,12 @@ class ReadPagesWithLvmHandler:
         self._lvm = lvm
         self._table_ocr = table_ocr
         self._clock = clock
+        self._id_generator = id_generator
         self._event_publisher = event_publisher
         self._min_page_text_chars = min_page_text_chars
 
     def read(self, command: ReadPagesWithLvm) -> KnowledgeIngestion:
-        """Read the pages without a text layer, store their blocks and complete the ingestion.
+        """Read the pages without a text layer, store their blocks and hand the run to chunking.
 
         The new blocks replace those stored for the same pages, so a message seen
         again is safe. An error that a retry cannot fix ends the ingestion as FAILED.
@@ -101,9 +106,7 @@ class ReadPagesWithLvmHandler:
         ingestion.start_page_reading(self._clock.now())
         self._ingestion_repository.save(ingestion)
         try:
-            content, page_numbers, tables_for_review = self._read_pages(
-                ingestion, command.page_numbers
-            )
+            page_numbers, tables_for_review = self._read_pages(ingestion, command.page_numbers)
         except InfrastructureError:
             raise
         except ProjectError as error:
@@ -119,11 +122,16 @@ class ReadPagesWithLvmHandler:
             )
             return ingestion
 
-        ingestion.complete(
-            blocks_for_review=sum(block.needs_human_review for block in content.blocks),
-            now=self._clock.now(),
+        ingestion.wait_for_chunking(self._clock.now())
+        self._ingestion_repository.save(
+            ingestion,
+            next_step_message(
+                ingestion,
+                IngestionLane.CHUNKING,
+                clock=self._clock,
+                id_generator=self._id_generator,
+            ),
         )
-        self._ingestion_repository.save(ingestion)
         if not page_numbers:
             return ingestion
         self._event_publisher.publish(
@@ -149,7 +157,7 @@ class ReadPagesWithLvmHandler:
 
     def _read_pages(
         self, ingestion: KnowledgeIngestion, requested_pages: tuple[int, ...] | None
-    ) -> tuple[ExtractedContent, tuple[int, ...], int]:
+    ) -> tuple[tuple[int, ...], int]:
         item = self._repository.get_by_id(ingestion.item_id)
         version = item.get_version(ingestion.version_tag)
         content = self._extracted_content_repository.get(item.item_id, version.version_tag)
@@ -157,7 +165,7 @@ class ReadPagesWithLvmHandler:
             min_page_text_chars=self._min_page_text_chars
         )
         if version.document_format != DocumentFormat.PDF or not page_numbers:
-            return content, (), 0
+            return (), 0
 
         pdf = self._source_file_store.read(version.source_file_reference)
         page_blocks = self._read_in_two_passes(pdf, page_numbers)
@@ -166,7 +174,7 @@ class ReadPagesWithLvmHandler:
         tables_for_review = sum(
             block.needs_human_review for blocks in page_blocks.values() for block in blocks
         )
-        return content, tuple(page_numbers), tables_for_review
+        return tuple(page_numbers), tables_for_review
 
     def _read_in_two_passes(
         self, pdf: bytes, page_numbers: Sequence[int]

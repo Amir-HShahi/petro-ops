@@ -87,6 +87,7 @@ def test_every_ingestion_queue_is_listed_in_order_when_read(
     assert [depth.queue for depth in depths] == [
         "ingestion",
         "ingestion.vision",
+        "ingestion.chunking",
         "ingestion.retry",
         "ingestion.dlq",
     ]

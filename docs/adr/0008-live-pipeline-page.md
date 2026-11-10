@@ -8,7 +8,8 @@ The ingestion pipeline (ADR 0005) is hard to see at work: a file passes through 
 
 ## Decision
 - **Page:** `GET /pipeline`, served by the existing FastAPI app, with its CSS and JS under `/pipeline/assets`. Plain HTML, CSS and vanilla JS shipped in the package: no CDN, no npm, no web fonts. It polls the routes below about once a second.
-- It shows an upload form (file, owner Node from the registry, document type) that calls `POST /knowledge-items`; each recent ingestion as a card in a column per status (`QUEUED → EXTRACTING → READING_PAGES → COMPLETED / FAILED`) with its file name, format, attempts, `blocks_for_review` and failure code; and the queues with their counts. A completed card opens its blocks through the existing content route.
+- **Look:** it follows the GitHub Actions run view. The queues are a graph of status nodes (outbox → `ingestion` → `ingestion.vision` → `ingestion.chunking`, with `ingestion.retry` and `ingestion.dlq` below), and the recent ingestions are a list of rows with a status icon, a four-stage track and times. It has a light and a dark theme: the page follows the system setting until the user picks one with the switch in the header, and the choice is kept in `localStorage`.
+- It shows an upload form (file, owner Node from the registry, document type) in a "Submit a file" popover that calls `POST /knowledge-items`; each recent ingestion as a row with its status (`QUEUED → EXTRACTING → READING_PAGES → CHUNKING → COMPLETED / FAILED`), file name, format, attempts, chunk count, `blocks_for_review`, duplicate flag count and failure code, filterable by status; and the queues with their counts. A completed row opens its duplicate flags and blocks through the existing content route.
 - **New routes**, which extend the table in ADR 0006:
 
   | Action | Route |

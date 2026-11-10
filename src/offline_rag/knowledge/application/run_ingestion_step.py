@@ -4,7 +4,11 @@ from enum import StrEnum
 
 import structlog
 
+from offline_rag.knowledge.application.chunk_knowledge_content import (
+    ChunkKnowledgeContentHandler,
+)
 from offline_rag.knowledge.application.commands import (
+    ChunkKnowledgeContent,
     ExtractKnowledgeContent,
     FailKnowledgeIngestion,
     ReadPagesWithLvm,
@@ -36,7 +40,7 @@ class IngestionStepOutcome(StrEnum):
 
 
 class RunIngestionStepHandler:
-    """Routes a message to extraction or page reading, and retries what a retry can fix.
+    """Routes a message to extraction, page reading or chunking, and retries what it can fix.
 
     Errors a retry cannot fix, such as a damaged file, are already handled by the
     steps, which end the ingestion as FAILED. Here only infrastructure errors are
@@ -48,6 +52,7 @@ class RunIngestionStepHandler:
         *,
         extract_handler: ExtractKnowledgeContentHandler,
         read_pages_handler: ReadPagesWithLvmHandler,
+        chunk_handler: ChunkKnowledgeContentHandler,
         fail_handler: FailKnowledgeIngestionHandler,
         max_attempts: int,
     ) -> None:
@@ -56,11 +61,13 @@ class RunIngestionStepHandler:
         Args:
             extract_handler: Runs the text lane step.
             read_pages_handler: Runs the vision lane step.
+            chunk_handler: Runs the chunking lane step.
             fail_handler: Ends an ingestion whose retries are used up.
             max_attempts: How many times a step is tried before the ingestion fails.
         """
         self._extract_handler = extract_handler
         self._read_pages_handler = read_pages_handler
+        self._chunk_handler = chunk_handler
         self._fail_handler = fail_handler
         self._max_attempts = max_attempts
 
@@ -107,3 +114,5 @@ class RunIngestionStepHandler:
                 )
             case IngestionLane.VISION:
                 self._read_pages_handler.read(ReadPagesWithLvm(ingestion_id=command.ingestion_id))
+            case IngestionLane.CHUNKING:
+                self._chunk_handler.chunk(ChunkKnowledgeContent(ingestion_id=command.ingestion_id))

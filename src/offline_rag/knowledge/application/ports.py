@@ -7,7 +7,9 @@ from enum import StrEnum
 from typing import Protocol
 
 from offline_rag.knowledge.domain.document_format import DocumentFormat
+from offline_rag.knowledge.domain.duplicate_detection import DuplicateFlag, VersionFingerprint
 from offline_rag.knowledge.domain.extracted_content import ExtractedContent
+from offline_rag.knowledge.domain.knowledge_chunk import KnowledgeChunk
 from offline_rag.knowledge.domain.knowledge_ingestion import IngestionStatus, KnowledgeIngestion
 from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
 from offline_rag.knowledge.domain.version_tag import VersionTag
@@ -36,6 +38,7 @@ class IngestionLane(StrEnum):
 
     TEXT = "text"
     VISION = "vision"
+    CHUNKING = "chunking"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -63,20 +66,50 @@ class KnowledgeIngestionSummary:
         ingestion: The run.
         source_file_name: The name the file was submitted under.
         document_format: The format read from the file's content.
+        duplicate_flag_count: How many DuplicateFlags the version has.
     """
 
     ingestion: KnowledgeIngestion
     source_file_name: str
     document_format: DocumentFormat
+    duplicate_flag_count: int = 0
 
 
 class KnowledgeIngestionRepository(Protocol):
     """Stores KnowledgeIngestions, writing each with its outbox message in one transaction."""
 
     def add_with_item(
-        self, item: KnowledgeItem, ingestion: KnowledgeIngestion, message: OutboxMessage
+        self,
+        item: KnowledgeItem,
+        ingestion: KnowledgeIngestion,
+        message: OutboxMessage,
+        duplicate_flags: Sequence[DuplicateFlag] = (),
     ) -> None:
-        """Store a new KnowledgeItem, its first ingestion and the message that starts it."""
+        """Store a new KnowledgeItem with its first ingestion, message and flags, all together.
+
+        Args:
+            item: The new item.
+            ingestion: The ingestion of its first version.
+            message: The message that starts the ingestion.
+            duplicate_flags: The flags found on the first version at submission.
+        """
+        ...
+
+    def add_with_version(
+        self,
+        item: KnowledgeItem,
+        ingestion: KnowledgeIngestion,
+        message: OutboxMessage,
+        duplicate_flags: Sequence[DuplicateFlag] = (),
+    ) -> None:
+        """Store an item's newest version as active, with its ingestion, message and flags.
+
+        Args:
+            item: The item, whose newest version is the one to store.
+            ingestion: The ingestion of that version.
+            message: The message that starts the ingestion.
+            duplicate_flags: The flags found on the version when it was published.
+        """
         ...
 
     def add(self, ingestion: KnowledgeIngestion, message: OutboxMessage) -> None:
@@ -118,7 +151,7 @@ class KnowledgeIngestionRepository(Protocol):
     def find_stalled(self, stalled_since: datetime, limit: int) -> list[KnowledgeIngestion]:
         """Return ingestions waiting for a worker whose message may have been lost.
 
-        An ingestion counts when it is QUEUED or READING_PAGES, has not changed
+        An ingestion counts when it is QUEUED, READING_PAGES or CHUNKING, has not changed
         since `stalled_since`, and all its messages were published before then.
         EXTRACTING runs are left out: the broker redelivers their unacked message.
 
@@ -359,4 +392,70 @@ class TableOcr(Protocol):
 
     def release(self) -> None:
         """Free the memory the model holds. It loads again on its next use."""
+        ...
+
+
+class Tokenizer(Protocol):
+    """Counts tokens the way the chunk sizes are measured (ADR 0009)."""
+
+    def count_tokens(self, text: str) -> int:
+        """Return how many tokens the text has. Empty text has none."""
+        ...
+
+
+class KnowledgeChunkRepository(Protocol):
+    """Stores the KnowledgeChunks of each KnowledgeVersion (spec §7.4)."""
+
+    def replace(
+        self, item_id: str, version_tag: VersionTag, chunks: Sequence[KnowledgeChunk]
+    ) -> None:
+        """Store the chunks of a version, replacing those stored for it before."""
+        ...
+
+    def list_by_version(self, item_id: str, version_tag: VersionTag) -> list[KnowledgeChunk]:
+        """Return the chunks of a version in order; none if it was not chunked yet."""
+        ...
+
+    def list_active_by_owner(self, owner_node_id: NodeIdentifier) -> list[KnowledgeChunk]:
+        """Return the chunks of the active version of every item the Node owns."""
+        ...
+
+
+class VersionFingerprintRepository(Protocol):
+    """Finds versions of one Node by their hashes, for the duplicate checks (spec §7.7)."""
+
+    def save_text_hash(
+        self, item_id: str, version_tag: VersionTag, normalized_text_hash: str | None
+    ) -> None:
+        """Record the normalized text hash of a version, once it is chunked."""
+        ...
+
+    def find_by_content_hash(
+        self, owner_node_id: NodeIdentifier, content_hash: str
+    ) -> list[VersionFingerprint]:
+        """Return every version, active or not, of the Node's items with this file hash."""
+        ...
+
+    def find_by_text_hash(
+        self, owner_node_id: NodeIdentifier, normalized_text_hash: str
+    ) -> list[VersionFingerprint]:
+        """Return every version, active or not, of the Node's items with this text hash."""
+        ...
+
+    def list_active_by_owner(self, owner_node_id: NodeIdentifier) -> list[VersionFingerprint]:
+        """Return the active version of every item the Node owns."""
+        ...
+
+
+class DuplicateFlagRepository(Protocol):
+    """Stores the DuplicateFlags raised on each KnowledgeVersion (spec §7.7)."""
+
+    def replace(
+        self, item_id: str, version_tag: VersionTag, flags: Sequence[DuplicateFlag]
+    ) -> None:
+        """Store the flags of a version, replacing those stored for it before."""
+        ...
+
+    def list_by_version(self, item_id: str, version_tag: VersionTag) -> list[DuplicateFlag]:
+        """Return the flags of a version, ordered by the id of the item each one names."""
         ...

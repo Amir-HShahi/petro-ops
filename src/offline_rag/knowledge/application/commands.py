@@ -58,6 +58,42 @@ class ReadPagesWithLvm:
 
 
 @dataclass(frozen=True, kw_only=True)
+class PublishKnowledgeVersion:
+    """Publish a new file as the next, active version of a KnowledgeItem (spec §7.6).
+
+    Attributes:
+        item_id: The KnowledgeItem.
+        source_file_name: The name of the new file, as the user knows it.
+        content: The whole new file.
+        change_reason: Why the item changed, in a sentence.
+        metadata: Metadata of the new version. None keeps the active version's metadata.
+        diff_summary: Optional short summary of what changed.
+        request_id: The request that asked for it, for tracing logs.
+    """
+
+    item_id: str
+    source_file_name: str
+    content: bytes = field(repr=False)
+    change_reason: str
+    metadata: MetadataRecord | None = None
+    diff_summary: str | None = None
+    request_id: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChunkKnowledgeContent:
+    """Cut the stored content of an ingestion's version into chunks and check for duplicates.
+
+    Spec §7.2 steps 5 and 7, §7.4, §7.7.
+
+    Attributes:
+        ingestion_id: The KnowledgeIngestion, which must be waiting for chunking.
+    """
+
+    ingestion_id: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class ReingestKnowledgeItem:
     """Run the ingestion of a KnowledgeVersion again, for example after a parser fix.
 

@@ -121,6 +121,7 @@ def test_problem_details_are_printed_when_submission_fails(
 
 
 INSPECTION_DOCX = FIXTURE_DOCS / "synthetic/inspection_sp12_riser_r3_2024.docx"
+INSPECTION_V2_DOCX = FIXTURE_DOCS / "cases/inspection_sp12_riser_r3_2026_v2.docx"
 
 
 def _run(arguments: list[str], settings: Settings, capsys: pytest.CaptureFixture[str]) -> dict:  # type: ignore[type-arg]
@@ -139,13 +140,12 @@ def _submit_docx(settings: Settings, capsys: pytest.CaptureFixture[str]) -> dict
     )
 
 
-def _run_text_step(settings: Settings, ingestion_id: str) -> None:
-    """Do what a text worker does with the ingestion's message."""
+def _run_text_and_chunking_steps(settings: Settings, ingestion_id: str) -> None:
+    """Do what a text worker and then a chunking worker do with the ingestion's messages."""
     knowledge = build_knowledge(settings)
     try:
-        knowledge.run_step_handler.run(
-            RunIngestionStep(ingestion_id=ingestion_id, lane=IngestionLane.TEXT)
-        )
+        for lane in (IngestionLane.TEXT, IngestionLane.CHUNKING):
+            knowledge.run_step_handler.run(RunIngestionStep(ingestion_id=ingestion_id, lane=lane))
     finally:
         knowledge.close()
 
@@ -173,11 +173,11 @@ def test_content_is_not_found_when_no_worker_has_run_yet(
     assert problem["type"] == "KNOWLEDGE_EXTRACTED_CONTENT_NOT_FOUND"
 
 
-def test_blocks_are_printed_when_the_text_step_has_run(
+def test_blocks_are_printed_when_the_worker_steps_have_run(
     settings: Settings, capsys: pytest.CaptureFixture[str]
 ):
     submitted = _submit_docx(settings, capsys)
-    _run_text_step(settings, submitted["ingestion_id"])
+    _run_text_and_chunking_steps(settings, submitted["ingestion_id"])
 
     shown = _run(["show-content", submitted["item_id"], "--limit", "2"], settings, capsys)
     status = _run(["status", submitted["ingestion_id"]], settings, capsys)
@@ -189,11 +189,49 @@ def test_blocks_are_printed_when_the_text_step_has_run(
     assert shown["blocks"][0]["heading_path"]
 
 
+def test_chunks_are_printed_when_the_worker_steps_have_run(
+    settings: Settings, capsys: pytest.CaptureFixture[str]
+):
+    submitted = _submit_docx(settings, capsys)
+    _run_text_and_chunking_steps(settings, submitted["ingestion_id"])
+
+    chunks = _run(["show-chunks", submitted["item_id"]], settings, capsys)
+    status = _run(["status", submitted["ingestion_id"]], settings, capsys)
+
+    assert status["chunk_count"] == chunks["chunk_count"] > 0
+    assert status["duplicate_flags"] == []
+    assert chunks["is_retrievable"] is True
+    assert all(chunk["token_count"] <= settings.chunk_max_tokens for chunk in chunks["chunks"])
+
+
+def test_new_version_is_published_and_old_chunks_are_superseded_when_a_file_changes(
+    settings: Settings, capsys: pytest.CaptureFixture[str]
+):
+    submitted = _submit_docx(settings, capsys)
+    _run_text_and_chunking_steps(settings, submitted["ingestion_id"])
+
+    published = _run(
+        [
+            "publish-version",
+            submitted["item_id"],
+            str(INSPECTION_V2_DOCX),
+            "--change-reason",
+            "Adds 3 readings and a change note.",
+        ],
+        settings,
+        capsys,
+    )
+    old = _run(["show-chunks", submitted["item_id"], "--version", "v1"], settings, capsys)
+
+    assert (published["version_tag"], published["status"]) == ("v2", "queued")
+    assert (old["is_retrievable"], old["active_version_tag"]) == (False, "v2")
+
+
 def test_new_ingestion_is_queued_when_a_completed_version_is_reingested(
     settings: Settings, capsys: pytest.CaptureFixture[str]
 ):
     submitted = _submit_docx(settings, capsys)
-    _run_text_step(settings, submitted["ingestion_id"])
+    _run_text_and_chunking_steps(settings, submitted["ingestion_id"])
 
     reingested = _run(["reingest", submitted["item_id"], "--version", "v1"], settings, capsys)
 

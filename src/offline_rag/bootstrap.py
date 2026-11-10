@@ -7,6 +7,10 @@ from dataclasses import dataclass
 import pika
 import structlog
 
+from offline_rag.knowledge.application.chunk_knowledge_content import (
+    ChunkingSizes,
+    ChunkKnowledgeContentHandler,
+)
 from offline_rag.knowledge.application.extract_knowledge_content import (
     ExtractKnowledgeContentHandler,
 )
@@ -17,6 +21,9 @@ from offline_rag.knowledge.application.knowledge_ingestion_queries import (
     KnowledgeIngestionQueries,
 )
 from offline_rag.knowledge.application.ports import IngestionLane
+from offline_rag.knowledge.application.publish_knowledge_version import (
+    PublishKnowledgeVersionHandler,
+)
 from offline_rag.knowledge.application.publish_outbox_messages import (
     PublishOutboxMessagesHandler,
 )
@@ -29,6 +36,8 @@ from offline_rag.knowledge.application.reingest_knowledge_item import (
 )
 from offline_rag.knowledge.application.run_ingestion_step import RunIngestionStepHandler
 from offline_rag.knowledge.application.submit_knowledge_item import SubmitKnowledgeItemHandler
+from offline_rag.knowledge.domain.duplicate_detection import DuplicateDetector
+from offline_rag.knowledge.infrastructure.approximate_tokenizer import ApproximateTokenizer
 from offline_rag.knowledge.infrastructure.csv_node_directory import CsvNodeDirectory
 from offline_rag.knowledge.infrastructure.docling_document_parser import DoclingDocumentParser
 from offline_rag.knowledge.infrastructure.in_process_event_publisher import (
@@ -44,8 +53,14 @@ from offline_rag.knowledge.infrastructure.ollama_lvm import OllamaLvm
 from offline_rag.knowledge.infrastructure.ollama_table_ocr import OllamaTableOcr
 from offline_rag.knowledge.infrastructure.pdfium_page_renderer import PdfiumPageRenderer
 from offline_rag.knowledge.infrastructure.postgres_database import PostgresDatabase
+from offline_rag.knowledge.infrastructure.postgres_duplicate_flag_repository import (
+    PostgresDuplicateFlagRepository,
+)
 from offline_rag.knowledge.infrastructure.postgres_extracted_content_repository import (
     PostgresExtractedContentRepository,
+)
+from offline_rag.knowledge.infrastructure.postgres_knowledge_chunk_repository import (
+    PostgresKnowledgeChunkRepository,
 )
 from offline_rag.knowledge.infrastructure.postgres_knowledge_ingestion_repository import (
     PostgresKnowledgeIngestionRepository,
@@ -54,6 +69,9 @@ from offline_rag.knowledge.infrastructure.postgres_knowledge_item_repository imp
     PostgresKnowledgeItemRepository,
 )
 from offline_rag.knowledge.infrastructure.postgres_outbox import PostgresOutbox
+from offline_rag.knowledge.infrastructure.postgres_version_fingerprint_repository import (
+    PostgresVersionFingerprintRepository,
+)
 from offline_rag.knowledge.infrastructure.rabbitmq_ingestion_consumer import (
     RabbitMqIngestionConsumer,
 )
@@ -75,8 +93,10 @@ class KnowledgeWiring:
     """The Knowledge Management use cases and queries, and the connections they share."""
 
     submit_handler: SubmitKnowledgeItemHandler
+    publish_version_handler: PublishKnowledgeVersionHandler
     extract_handler: ExtractKnowledgeContentHandler
     read_pages_handler: ReadPagesWithLvmHandler
+    chunk_handler: ChunkKnowledgeContentHandler
     reingest_handler: ReingestKnowledgeItemHandler
     fail_handler: FailKnowledgeIngestionHandler
     reconcile_handler: ReconcileKnowledgeIngestionsHandler
@@ -115,6 +135,7 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
     """Return Knowledge Management on Postgres, local files, local parsers and local models.
 
     Submitting queues a KnowledgeIngestion; the workers run its steps (ADR 0005).
+    Chunk sizes and duplicate thresholds come from `Settings` (ADR 0009, ADR 0010).
     """
     database = PostgresDatabase(
         settings.database_url,
@@ -124,6 +145,14 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
     knowledge_item_repository = PostgresKnowledgeItemRepository(database)
     extracted_content_repository = PostgresExtractedContentRepository(database)
     ingestion_repository = PostgresKnowledgeIngestionRepository(database)
+    chunk_repository = PostgresKnowledgeChunkRepository(database)
+    fingerprint_repository = PostgresVersionFingerprintRepository(database)
+    duplicate_flag_repository = PostgresDuplicateFlagRepository(database)
+    detector = DuplicateDetector(
+        overlap_chunk_similarity=settings.overlap_chunk_similarity,
+        ambiguous_from_similarity=settings.overlap_ambiguous_from_similarity,
+        min_chunk_share=settings.overlap_min_chunk_share,
+    )
     source_file_store = LocalSourceFileStore(settings.data_dir / SOURCE_FILES_DIR_NAME)
     clock = SystemClock()
     id_generator = UuidIdGenerator()
@@ -167,8 +196,27 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
             prompt=load_registered_prompt(task="table_ocr", **registries),
         ),
         clock=clock,
+        id_generator=id_generator,
         event_publisher=event_publisher,
         min_page_text_chars=settings.min_page_text_chars,
+    )
+    chunk_handler = ChunkKnowledgeContentHandler(
+        ingestion_repository=ingestion_repository,
+        repository=knowledge_item_repository,
+        extracted_content_repository=extracted_content_repository,
+        chunk_repository=chunk_repository,
+        fingerprint_repository=fingerprint_repository,
+        duplicate_flag_repository=duplicate_flag_repository,
+        tokenizer=ApproximateTokenizer(),
+        detector=detector,
+        clock=clock,
+        event_publisher=event_publisher,
+        sizes=ChunkingSizes(
+            target_tokens=settings.chunk_target_tokens,
+            max_tokens=settings.chunk_max_tokens,
+            overlap_share=settings.chunk_overlap_share,
+        ),
+        words_per_shingle=settings.duplicate_shingle_words,
     )
 
     node_directory = CsvNodeDirectory(settings.node_registry_path)
@@ -176,6 +224,8 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
         ingestion_repository=ingestion_repository,
         node_directory=node_directory,
         source_file_store=source_file_store,
+        fingerprint_repository=fingerprint_repository,
+        detector=detector,
         clock=clock,
         id_generator=id_generator,
         event_publisher=event_publisher,
@@ -189,8 +239,20 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
     message_publisher = RabbitMqIngestionMessagePublisher(settings.rabbitmq_url)
     return KnowledgeWiring(
         submit_handler=submit_handler,
+        publish_version_handler=PublishKnowledgeVersionHandler(
+            ingestion_repository=ingestion_repository,
+            repository=knowledge_item_repository,
+            source_file_store=source_file_store,
+            fingerprint_repository=fingerprint_repository,
+            detector=detector,
+            clock=clock,
+            id_generator=id_generator,
+            event_publisher=event_publisher,
+            max_file_mb=settings.max_file_mb,
+        ),
         extract_handler=extract_handler,
         read_pages_handler=read_pages_handler,
+        chunk_handler=chunk_handler,
         reingest_handler=ReingestKnowledgeItemHandler(
             ingestion_repository=ingestion_repository,
             repository=knowledge_item_repository,
@@ -211,6 +273,7 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
         run_step_handler=RunIngestionStepHandler(
             extract_handler=extract_handler,
             read_pages_handler=read_pages_handler,
+            chunk_handler=chunk_handler,
             fail_handler=fail_handler,
             max_attempts=settings.worker_max_attempts,
         ),
@@ -218,6 +281,8 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
             ingestion_repository=ingestion_repository,
             repository=knowledge_item_repository,
             extracted_content_repository=extracted_content_repository,
+            chunk_repository=chunk_repository,
+            duplicate_flag_repository=duplicate_flag_repository,
             outbox=outbox,
             node_directory=node_directory,
             queue_monitor=RabbitMqManagementQueueMonitor(

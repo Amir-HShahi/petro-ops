@@ -211,7 +211,7 @@ def test_ingestion_waits_for_the_vision_worker_when_pages_have_no_text(
     ]
 
 
-def test_ingestion_completes_with_review_count_when_every_page_has_text(
+def test_ingestion_waits_for_chunking_when_every_page_has_text(
     ingestions: InMemoryKnowledgeIngestionRepository,
     repository: InMemoryKnowledgeItemRepository,
     file_store: InMemorySourceFileStore,
@@ -237,9 +237,11 @@ def test_ingestion_completes_with_review_count_when_every_page_has_text(
 
     result = handler.extract(_command(ingestion_id))
 
-    assert result.status == IngestionStatus.COMPLETED
-    assert result.blocks_for_review == 1
-    assert ingestions.messages == []
+    assert result.status == IngestionStatus.CHUNKING
+    assert ingestions.get_by_id(ingestion_id).status == IngestionStatus.CHUNKING
+    assert [(message.ingestion_id, message.lane) for message in ingestions.messages] == [
+        (ingestion_id, IngestionLane.CHUNKING)
+    ]
 
 
 def test_extraction_replaces_the_old_result_when_run_again(

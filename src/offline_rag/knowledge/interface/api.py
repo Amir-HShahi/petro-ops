@@ -19,9 +19,16 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from offline_rag.bootstrap import build_knowledge, configure_logging
-from offline_rag.knowledge.application.commands import ReingestKnowledgeItem, SubmitKnowledgeItem
+from offline_rag.knowledge.application.commands import (
+    PublishKnowledgeVersion,
+    ReingestKnowledgeItem,
+    SubmitKnowledgeItem,
+)
 from offline_rag.knowledge.application.knowledge_ingestion_queries import (
     KnowledgeIngestionQueries,
+)
+from offline_rag.knowledge.application.publish_knowledge_version import (
+    PublishKnowledgeVersionHandler,
 )
 from offline_rag.knowledge.application.reingest_knowledge_item import (
     ReingestKnowledgeItemHandler,
@@ -38,8 +45,9 @@ from offline_rag.knowledge.interface.problem_details import (
     problem_from_error,
 )
 from offline_rag.knowledge.interface.response_bodies import (
+    chunks_body,
     content_body,
-    ingestion_body,
+    ingestion_status_body,
     nodes_body,
     queue_depths_body,
     receipt_body,
@@ -65,6 +73,7 @@ MAX_RECENT_INGESTIONS = 100
 def create_app(
     *,
     submit_handler: SubmitKnowledgeItemHandler,
+    publish_version_handler: PublishKnowledgeVersionHandler,
     reingest_handler: ReingestKnowledgeItemHandler,
     queries: KnowledgeIngestionQueries,
     max_file_mb: int,
@@ -74,6 +83,7 @@ def create_app(
 
     Args:
         submit_handler: Registers submitted files.
+        publish_version_handler: Publishes a new file as the next version of an item.
         reingest_handler: Queues a version again.
         queries: Reads ingestion status and extracted content.
         max_file_mb: The largest upload accepted, in megabytes. Reading stops just
@@ -215,7 +225,7 @@ def create_app(
     @app.get("/knowledge-ingestions/{ingestion_id}")
     def status(ingestion_id: str) -> dict[str, Any]:
         """Return the status of an ingestion."""
-        return ingestion_body(queries.get_ingestion(ingestion_id))
+        return ingestion_status_body(queries.get_ingestion(ingestion_id))
 
     @app.get("/knowledge-items/{item_id}/versions/{version_tag}/content")
     def show_content(
@@ -228,6 +238,41 @@ def create_app(
         return content_body(
             item_id, found_tag, extracted, min_page_text_chars=min_page_text_chars, limit=limit
         )
+
+    @app.get("/knowledge-items/{item_id}/versions/{version_tag}/chunks")
+    def show_chunks(
+        item_id: str,
+        version_tag: str,
+        limit: Annotated[int | None, Query(ge=1, description="Chunks to return.")] = None,
+    ) -> dict[str, Any]:
+        """Return the chunks of a version, in order, and whether they are retrievable."""
+        return chunks_body(
+            item_id, queries.get_chunks(item_id, VersionTag(version_tag)), limit=limit
+        )
+
+    @app.post("/knowledge-items/{item_id}/versions", status_code=ACCEPTED)
+    def publish_version(
+        item_id: str,
+        response: Response,
+        file: Annotated[UploadFile, File(description="The new DOC, DOCX or PDF file.")],
+        change_reason: Annotated[str, Form(description="Why the item changed.")],
+        diff_summary: Annotated[str | None, Form()] = None,
+    ) -> dict[str, Any]:
+        """Publish a file as the item's next, active version. Returns 202 with its ingestion."""
+        if not file.filename:
+            raise RequestInvalidError([{"field": "file", "problem": "The file has no name."}])
+        receipt = publish_version_handler.publish(
+            PublishKnowledgeVersion(
+                item_id=item_id,
+                source_file_name=file.filename,
+                content=file.file.read(max_file_mb * BYTES_PER_MB + 1),
+                change_reason=change_reason,
+                diff_summary=diff_summary,
+                request_id=_request_id(),
+            )
+        )
+        response.headers["Location"] = f"/knowledge-ingestions/{receipt.ingestion_id}"
+        return receipt_body(receipt)
 
     @app.post("/knowledge-items/{item_id}/versions/{version_tag}/ingestions", status_code=ACCEPTED)
     def reingest(item_id: str, version_tag: str, response: Response) -> dict[str, Any]:
@@ -249,6 +294,7 @@ def run_api(settings: Settings) -> None:
     knowledge = build_knowledge(settings)
     app = create_app(
         submit_handler=knowledge.submit_handler,
+        publish_version_handler=knowledge.publish_version_handler,
         reingest_handler=knowledge.reingest_handler,
         queries=knowledge.queries,
         max_file_mb=settings.max_file_mb,

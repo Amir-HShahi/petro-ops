@@ -10,10 +10,14 @@ from pika.exchange_type import ExchangeType
 from offline_rag.knowledge.application.ports import IngestionLane
 
 INGESTION_EXCHANGE = "ingestion.x"
-# Fanout, so a retried message keeps its own routing key (`text` or `vision`), and
+# Fanout, so a retried message keeps its own routing key (`text`, `vision` or `chunking`), and
 # the retry queue dead-letters it back to INGESTION_EXCHANGE under that key.
 RETRY_EXCHANGE = "ingestion.retry.x"
-QUEUE_BY_LANE = {IngestionLane.TEXT: "ingestion", IngestionLane.VISION: "ingestion.vision"}
+QUEUE_BY_LANE = {
+    IngestionLane.TEXT: "ingestion",
+    IngestionLane.VISION: "ingestion.vision",
+    IngestionLane.CHUNKING: "ingestion.chunking",
+}
 RETRY_QUEUE = "ingestion.retry"
 DEAD_LETTER_QUEUE = "ingestion.dlq"
 ATTEMPT_HEADER = "attempt"

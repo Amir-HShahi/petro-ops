@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start the whole ingestion pipeline with one command (docs/running-ingestion.md):
 # Postgres and RabbitMQ in Docker, then the tables, the outbox relay, the text
-# workers, the vision worker and the API as local processes. Ctrl+C stops the
+# workers, the vision worker, the chunking worker and the API as local processes. Ctrl+C stops the
 # processes; the containers keep running unless --down is given.
 set -euo pipefail
 
@@ -108,6 +108,7 @@ if $start_vision; then
   fi
   start vision-worker worker run --lane vision
 fi
+start chunking-worker worker run --lane chunking
 start api api run
 
 page_url="http://$api_host:$api_port/pipeline"

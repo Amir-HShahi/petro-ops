@@ -79,6 +79,21 @@ def _waiting_for_pages(ingestions: InMemoryKnowledgeIngestionRepository) -> Know
     return ingestion
 
 
+def _waiting_for_chunking(ingestions: InMemoryKnowledgeIngestionRepository) -> KnowledgeIngestion:
+    ingestion = _queued(ingestions)
+    ingestion.start_extraction(LONG_AGO)
+    ingestion.wait_for_chunking(LONG_AGO)
+    chunking = OutboxMessage(
+        outbox_id="m-chunking",
+        ingestion_id="ing-1",
+        lane=IngestionLane.CHUNKING,
+        created_at=LONG_AGO,
+    )
+    ingestions.save(ingestion, chunking)
+    ingestions.published_at[chunking.outbox_id] = LONG_AGO
+    return ingestion
+
+
 def _new_messages(ingestions: InMemoryKnowledgeIngestionRepository) -> list[OutboxMessage]:
     return [message for message in ingestions.messages if message.outbox_id.startswith("resent")]
 
@@ -106,6 +121,16 @@ def test_vision_message_is_added_when_page_reading_waited_too_long(
     handler.reconcile(ReconcileKnowledgeIngestions())
 
     assert [message.lane for message in _new_messages(ingestions)] == [IngestionLane.VISION]
+
+
+def test_chunking_message_is_added_when_chunking_waited_too_long(
+    handler: ReconcileKnowledgeIngestionsHandler, ingestions: InMemoryKnowledgeIngestionRepository
+):
+    _waiting_for_chunking(ingestions)
+
+    handler.reconcile(ReconcileKnowledgeIngestions())
+
+    assert [message.lane for message in _new_messages(ingestions)] == [IngestionLane.CHUNKING]
 
 
 def test_ingestion_itself_is_not_changed_when_message_is_resent(
@@ -166,7 +191,8 @@ def test_nothing_is_resent_when_ingestion_has_ended(
     ingestion = _queued(ingestions)
     ingestion.start_extraction(LONG_AGO)
     if has_completed:
-        ingestion.complete(blocks_for_review=0, now=LONG_AGO)
+        ingestion.wait_for_chunking(LONG_AGO)
+        ingestion.complete(blocks_for_review=0, chunk_count=1, now=LONG_AGO)
     else:
         ingestion.fail(failure_code="X", failure_detail="x", now=LONG_AGO)
     ingestions.save(ingestion)

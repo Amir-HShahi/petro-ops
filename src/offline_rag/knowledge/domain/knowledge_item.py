@@ -6,9 +6,15 @@ from datetime import datetime
 from offline_rag.knowledge.domain.document_format import DocumentFormat
 from offline_rag.knowledge.domain.errors import (
     InvalidKnowledgeVersionHistoryError,
+    KnowledgeVersionChangeReasonMissingError,
     KnowledgeVersionNotFoundError,
+    KnowledgeVersionUnchangedError,
 )
-from offline_rag.knowledge.domain.events import KnowledgeItemSubmitted, MetadataRecorded
+from offline_rag.knowledge.domain.events import (
+    KnowledgeItemSubmitted,
+    KnowledgeVersionPublished,
+    MetadataRecorded,
+)
 from offline_rag.knowledge.domain.knowledge_scope import KnowledgeScope
 from offline_rag.knowledge.domain.knowledge_version import KnowledgeVersion
 from offline_rag.knowledge.domain.version_tag import VersionTag
@@ -104,6 +110,84 @@ class KnowledgeItem:
             ),
         ]
         return item
+
+    def check_new_version(self, *, content_hash: str, change_reason: str) -> None:
+        """Check that a file may become the item's next version, without changing anything.
+
+        Callers use it to refuse a version before they store its file.
+
+        Raises:
+            KnowledgeVersionChangeReasonMissingError: The change reason is blank;
+                every update must say why it was made (spec §7.6).
+            KnowledgeVersionUnchangedError: The file is the active version's file,
+                so nothing changed.
+        """
+        if not change_reason.strip():
+            raise KnowledgeVersionChangeReasonMissingError(self._item_id)
+        active = self.active_version
+        if content_hash == active.content_hash:
+            raise KnowledgeVersionUnchangedError(self._item_id, active.version_tag.value)
+
+    def publish_version(
+        self,
+        *,
+        source_file_name: str,
+        source_file_reference: str,
+        document_format: DocumentFormat,
+        content_hash: str,
+        metadata: MetadataRecord,
+        change_reason: str,
+        published_at: datetime,
+        diff_summary: str | None = None,
+    ) -> KnowledgeVersion:
+        """Add a new version after the newest one and make it active (spec §7.6).
+
+        Old versions are kept and stay readable, but only the active version is
+        retrieved by default, so their chunks are superseded. The item records
+        `KnowledgeVersionPublished` and `MetadataRecorded`.
+
+        Raises:
+            KnowledgeVersionChangeReasonMissingError: The change reason is blank;
+                every update must say why it was made.
+            KnowledgeVersionUnchangedError: The file is the active version's file,
+                so nothing changed.
+        """
+        self.check_new_version(content_hash=content_hash, change_reason=change_reason)
+        newest = self._versions[-1]
+        sequence_number = newest.sequence_number + 1
+        version = KnowledgeVersion(
+            version_tag=VersionTag.for_sequence_number(sequence_number),
+            sequence_number=sequence_number,
+            source_file_name=source_file_name,
+            source_file_reference=source_file_reference,
+            document_format=document_format,
+            content_hash=content_hash,
+            metadata=metadata,
+            created_at=published_at,
+            change_reason=change_reason.strip(),
+            previous_version_tag=newest.version_tag,
+            diff_summary=diff_summary,
+        )
+        self._versions = (*self._versions, version)
+        self._active_version_tag = version.version_tag
+        self._pending_events += [
+            KnowledgeVersionPublished(
+                occurred_at=published_at,
+                item_id=self._item_id,
+                version_tag=version.version_tag,
+                previous_version_tag=newest.version_tag,
+                change_reason=version.change_reason or "",
+                document_format=document_format,
+                content_hash=content_hash,
+            ),
+            MetadataRecorded(
+                occurred_at=published_at,
+                item_id=self._item_id,
+                version_tag=version.version_tag,
+                metadata=metadata,
+            ),
+        ]
+        return version
 
     @property
     def item_id(self) -> str:

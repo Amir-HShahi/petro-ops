@@ -102,3 +102,31 @@ class InvalidIngestionTransitionError(UnexpectedError):
                 "to_status": to_status,
             },
         )
+
+
+class KnowledgeVersionChangeReasonMissingError(DomainError):
+    """A new KnowledgeVersion was published without saying why the item changed (spec §7.6)."""
+
+    code = "KNOWLEDGE_VERSION_CHANGE_REASON_MISSING"
+
+    def __init__(self, item_id: str) -> None:
+        """Create the error for the item that was to get a new version."""
+        super().__init__(
+            f"A new version of KnowledgeItem '{item_id}' needs a change reason. "
+            "Say in a sentence what changed, then publish it again.",
+            details={"item_id": item_id},
+        )
+
+
+class KnowledgeVersionUnchangedError(DomainError):
+    """A file published as a new version is byte for byte the active version (spec §7.6)."""
+
+    code = "KNOWLEDGE_VERSION_UNCHANGED"
+
+    def __init__(self, item_id: str, active_version_tag: str) -> None:
+        """Create the error naming the version the file repeats."""
+        super().__init__(
+            f"The file is the same as version '{active_version_tag}' of KnowledgeItem "
+            f"'{item_id}', so there is nothing to publish.",
+            details={"item_id": item_id, "active_version_tag": active_version_tag},
+        )

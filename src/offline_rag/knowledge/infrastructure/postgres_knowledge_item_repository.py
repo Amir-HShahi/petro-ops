@@ -120,12 +120,28 @@ def _version_to_row(item_id: str, version: KnowledgeVersion) -> tuple[object, ..
     )
 
 
-def _version_from_row(row: DictRow) -> KnowledgeVersion:
-    stored_metadata: dict[str, Any] = row["metadata"]
+def insert_newest_version(connection: psycopg.Connection[DictRow], item: KnowledgeItem) -> None:
+    """Insert an existing item's newest version and record which version is active.
+
+    Older versions are already stored and never change (spec §7.6).
+    """
+    connection.execute(_INSERT_VERSION, _version_to_row(item.item_id, item.versions[-1]))
+    connection.execute(
+        "UPDATE knowledge_item SET active_version_tag = %s WHERE item_id = %s",
+        (item.active_version.version_tag.value, item.item_id),
+    )
+
+
+def metadata_from_json(stored_metadata: dict[str, Any]) -> MetadataRecord:
+    """Return a MetadataRecord stored as a JSON object, with its lists as tuples again."""
     metadata_fields: dict[str, Any] = {
         name: tuple(value) if name in _TUPLE_METADATA_FIELDS else value
         for name, value in stored_metadata.items()
     }
+    return MetadataRecord(**metadata_fields)
+
+
+def _version_from_row(row: DictRow) -> KnowledgeVersion:
     previous = row["previous_version_tag"]
     return KnowledgeVersion(
         version_tag=VersionTag(row["version_tag"]),
@@ -134,7 +150,7 @@ def _version_from_row(row: DictRow) -> KnowledgeVersion:
         source_file_reference=row["source_file_reference"],
         document_format=DocumentFormat(row["document_format"]),
         content_hash=row["content_hash"],
-        metadata=MetadataRecord(**metadata_fields),
+        metadata=metadata_from_json(row["metadata"]),
         created_at=row["created_at"],
         change_reason=row["change_reason"],
         previous_version_tag=VersionTag(previous) if previous else None,

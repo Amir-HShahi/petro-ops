@@ -54,7 +54,7 @@ The six reader and directory ports (`NodeDirectory` to `JudgeScoreReader`) are t
 | Context | Use cases | On the board | Added |
 |---|---|---|---|
 | Organizational Hierarchy | 2 | 2 | 0 |
-| Knowledge Management | 6 | 3 | 3 |
+| Knowledge Management | 7 | 3 | 4 |
 | RAG Core | 2 | 1 | 1 |
 | Issue Management | 8 | 6 | 2 |
 | Executor Management | 2 | 1 | 1 |
@@ -63,7 +63,7 @@ The six reader and directory ports (`NodeDirectory` to `JudgeScoreReader`) are t
 | Evaluation and Judging | 2 | 2 | 0 |
 | RFP and Proposal | 5 | 3 | 2 |
 | Model and Prompt | 3 | 0 | 3 |
-| **Total** | **43** | **25** | **18** |
+| **Total** | **44** | **25** | **19** |
 
 ## 1. Organizational Hierarchy (`organization`, supporting)
 
@@ -79,14 +79,17 @@ The six reader and directory ports (`NodeDirectory` to `JudgeScoreReader`) are t
 
 | Command | Inputs | Aggregate | Ports | Events | Phase |
 |---|---|---|---|---|---|
-| `SubmitKnowledgeItem` | owner `NodeIdentifier`, source file, `KnowledgeScope`, `MetadataRecord` | `KnowledgeItem` | `KnowledgeItemRepository`, `NodeDirectory`, `DocumentParser`, `Embedder`, `VectorIndex`, `LLM` | `KnowledgeItemSubmitted`, `MetadataRecorded`, `DuplicateDetected` | 4 (duplicate check 5) |
-| `PublishKnowledgeVersion` | item id, new source file, change reason, updated `MetadataRecord` | `KnowledgeItem` | `KnowledgeItemRepository`, `DocumentParser`, `Clock` | `KnowledgeVersionPublished` | 5 |
+| `SubmitKnowledgeItem` | owner `NodeIdentifier`, source file, `KnowledgeScope`, `MetadataRecord` | `KnowledgeItem` | `KnowledgeIngestionRepository`, `NodeDirectory`, `SourceFileStore`, `VersionFingerprintRepository` | `KnowledgeItemSubmitted`, `MetadataRecorded`, `DuplicateDetected` | 4 (exact duplicate check 5) |
+| `PublishKnowledgeVersion` | item id, new source file, change reason, optional updated `MetadataRecord`, optional diff summary | `KnowledgeItem` | `KnowledgeItemRepository`, `KnowledgeIngestionRepository`, `SourceFileStore`, `VersionFingerprintRepository`, `Clock` | `KnowledgeVersionPublished`, `MetadataRecorded`, `DuplicateDetected` | 5 |
+| `ChunkKnowledgeContent` (added) | ingestion id | `KnowledgeIngestion` | `ExtractedContentRepository`, `KnowledgeChunkRepository`, `VersionFingerprintRepository`, `DuplicateFlagRepository`, `Tokenizer` | `DuplicateDetected` | 5 |
 | `ExtractThicknessReadings` (added) | item id, `VersionTag` | `KnowledgeItem` | `KnowledgeItemRepository`, `DocumentParser`, `LLM` | `ThicknessReadingsExtracted` | Unscheduled |
 | `CalculateCorrosionRate` | item id, `VersionTag` | `KnowledgeItem` | `KnowledgeItemRepository`, `Clock` | `CorrosionRateCalculated` | Unscheduled |
 | `ExtractLessonLearned` (added) | item id, `VersionTag` | `KnowledgeItem` | `KnowledgeItemRepository`, `LLM`, `PromptCatalog` | `LessonLearnedExtracted` | Unscheduled |
 | `StoreResolutionAsKnowledge` (added) | Issue id, owner `NodeIdentifier`, resolution text | `KnowledgeItem` | `KnowledgeItemRepository`, `IssueReader`, `Clock` | `ResolutionStoredAsKnowledge` | 7 |
 
-- `SubmitKnowledgeItem` uses the `DuplicateDetector` domain service. The `LLM` is only for the ambiguous band (domain-model, `DuplicateDetector`). What to do with a duplicate is OQ 6. The owner rule is OQ 5.
+- `SubmitKnowledgeItem` and `PublishKnowledgeVersion` use the `DuplicateDetector` for the exact check by file hash, before the file is parsed. A duplicate is flagged and still stored (ADR 0010). What to do with a duplicate is OQ 6. The owner rule is OQ 5.
+- `ChunkKnowledgeContent` runs in the chunking worker after extraction (ADR 0005, ADR 0009). It cuts the content into `KnowledgeChunk`s, stores the normalized text hash and runs the `DuplicateDetector` again for near duplicates, metadata variants and overlaps against the Node's other items (ADR 0010). Ambiguous overlaps are only marked; the `LLM` check of the ambiguous band waits for phase 8. Flags are read through the ingestion status query.
+- `PublishKnowledgeVersion` refuses a blank change reason (`KNOWLEDGE_VERSION_CHANGE_REASON_MISSING`) and a file identical to the active version (`KNOWLEDGE_VERSION_UNCHANGED`). The new version becomes active at once; the old version's chunks stay stored but are no longer retrievable. Without new metadata it keeps the previous version's.
 - `SubmitKnowledgeItem` is also the entry for generated content. A published RFP and a kept RAG answer are stored by calling it (spec §8.1, §15.1).
 - `ThicknessReadingsExtracted`, `CorrosionRateCalculated` and `LessonLearnedExtracted` are on the board, but the spec has no thickness, corrosion or lessons learned concept. Where the results are stored depends on OQ 4. These three use cases wait for that decision.
 - `BarrierRegisterUpdated` is on the board with no command and no spec basis. It depends on OQ 4 (AOQ 4).

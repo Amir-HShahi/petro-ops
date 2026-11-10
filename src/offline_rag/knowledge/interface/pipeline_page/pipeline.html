@@ -3,139 +3,287 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>Ingestion pipeline</title>
+  <script src="/pipeline/assets/theme.js"></script>
   <link rel="stylesheet" href="/pipeline/assets/pipeline.css">
 </head>
 <body>
-  <header class="top">
-    <div>
-      <h1>Knowledge ingestion pipeline</h1>
-      <p class="subtitle">Live view of KnowledgeIngestions and the RabbitMQ queues. Everything runs on this machine.</p>
-    </div>
-    <div class="live" id="live" data-state="connecting">
-      <span class="dot" aria-hidden="true"></span>
-      <span id="live-text">Connecting…</span>
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-logo" viewBox="0 0 16 16">
+      <circle cx="2.75" cy="8" r="1.75" fill="currentColor"/>
+      <circle cx="8" cy="8" r="1.75" fill="currentColor"/>
+      <circle cx="13.25" cy="8" r="1.75" fill="currentColor"/>
+      <path d="M4.5 8h1.75M9.75 8h1.75" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    </symbol>
+    <symbol id="i-check" viewBox="0 0 16 16">
+      <path fill="currentColor" fill-rule="evenodd" d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16ZM3.6 8.5 4.8 7.3 6.6 9.1 11.2 4.5 12.4 5.7 6.6 11.5Z"/>
+    </symbol>
+    <symbol id="i-x" viewBox="0 0 16 16">
+      <path fill="currentColor" fill-rule="evenodd" d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16ZM5 6.2 6.2 5 8 6.8 9.8 5 11 6.2 9.2 8 11 9.8 9.8 11 8 9.2 6.2 11 5 9.8 6.8 8Z"/>
+    </symbol>
+    <symbol id="i-clock" viewBox="0 0 16 16">
+      <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="8" cy="8" r="6.5"/>
+        <path d="M8 4.5V8l2.3 1.5"/>
+      </g>
+    </symbol>
+    <symbol id="i-spinner" viewBox="0 0 16 16">
+      <g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">
+        <circle cx="8" cy="8" r="6.25" stroke-opacity=".25"/>
+        <path d="M8 1.75A6.25 6.25 0 0 1 14.25 8"/>
+      </g>
+    </symbol>
+    <symbol id="i-circle" viewBox="0 0 16 16">
+      <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <circle cx="8" cy="8" r="6.5"/>
+        <path d="M5.5 8h5"/>
+      </g>
+    </symbol>
+    <symbol id="i-warning" viewBox="0 0 16 16">
+      <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 2 14.5 13.5h-13Z"/>
+        <path d="M8 6.5v3.2"/>
+      </g>
+      <circle cx="8" cy="11.7" r=".9" fill="currentColor"/>
+    </symbol>
+    <symbol id="i-sun" viewBox="0 0 16 16">
+      <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <circle cx="8" cy="8" r="2.75"/>
+        <path d="M8 1.5V3M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.05 1.05M11.55 11.55l1.05 1.05M3.4 12.6l1.05-1.05M11.55 4.45l1.05-1.05"/>
+      </g>
+    </symbol>
+    <symbol id="i-moon" viewBox="0 0 16 16">
+      <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M13.5 9.6A5.75 5.75 0 0 1 6.4 2.5a5.75 5.75 0 1 0 7.1 7.1Z"/>
+    </symbol>
+    <symbol id="i-monitor" viewBox="0 0 16 16">
+      <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="1.75" y="2.5" width="12.5" height="8.5" rx="1.25"/>
+        <path d="M5.5 13.75h5M8 11v2.75"/>
+      </g>
+    </symbol>
+    <symbol id="i-caret" viewBox="0 0 16 16">
+      <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="m4 6 4 4 4-4"/>
+    </symbol>
+    <symbol id="i-upload" viewBox="0 0 16 16">
+      <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M8 11V2.5M4.5 6 8 2.5 11.5 6M2.5 10.5v2.25c0 .4.35.75.75.75h9.5c.4 0 .75-.35.75-.75V10.5"/>
+    </symbol>
+    <symbol id="i-calendar" viewBox="0 0 16 16">
+      <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="3" width="12" height="10.5" rx="1.5"/>
+        <path d="M2 6.5h12M5 1.75v2.5M11 1.75v2.5"/>
+      </g>
+    </symbol>
+    <symbol id="i-stopwatch" viewBox="0 0 16 16">
+      <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="8" cy="9" r="5"/>
+        <path d="M8 9V6.2M6.5 1.75h3M12 4l1-1"/>
+      </g>
+    </symbol>
+    <symbol id="i-close" viewBox="0 0 16 16">
+      <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="m4 4 8 8M12 4l-8 8"/>
+    </symbol>
+  </svg>
+
+  <header class="site-header">
+    <div class="site-header-inner">
+      <div class="brand">
+        <svg class="icon" width="32" height="32" aria-hidden="true"><use href="#i-logo"></use></svg>
+        <span>Petro-Ops</span>
+        <span class="crumb-separator" aria-hidden="true">/</span>
+        <span class="crumb">Knowledge</span>
+      </div>
+      <div class="site-actions">
+        <div class="live" id="live" data-state="connecting">
+          <span class="dot" aria-hidden="true"></span>
+          <span id="live-text">Connecting…</span>
+        </div>
+        <div class="theme-switch" role="group" aria-label="Colour theme">
+          <button type="button" data-theme-choice="light" aria-pressed="false" title="Light theme">
+            <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-sun"></use></svg>
+            <span class="visually-hidden">Light</span>
+          </button>
+          <button type="button" data-theme-choice="dark" aria-pressed="false" title="Dark theme">
+            <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-moon"></use></svg>
+            <span class="visually-hidden">Dark</span>
+          </button>
+          <button type="button" data-theme-choice="system" aria-pressed="true" title="Match the system theme">
+            <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-monitor"></use></svg>
+            <span class="visually-hidden">System</span>
+          </button>
+        </div>
+      </div>
     </div>
   </header>
 
-  <main class="layout">
-    <section class="panel upload" aria-labelledby="upload-title">
-      <h2 id="upload-title">Submit a file</h2>
-      <form id="upload-form">
-        <label>File <span class="hint">DOC, DOCX or PDF</span>
-          <input type="file" name="file" required accept=".doc,.docx,.pdf">
-        </label>
-        <label>Owner Node
-          <select name="node_id" id="node-select" required>
-            <option value="">Loading Nodes…</option>
-          </select>
-        </label>
-        <label>Document type
-          <input type="text" name="document_type" list="document-types" placeholder="inspection_report">
-          <datalist id="document-types">
-            <option value="inspection_report">
-            <option value="shift_report">
-            <option value="project_report">
-            <option value="maintenance_record">
-            <option value="procedure">
-            <option value="issue_resolution">
-            <option value="personnel_profile">
-            <option value="node_description">
-            <option value="rfp">
-            <option value="proposal">
-          </datalist>
-        </label>
-        <button type="submit" id="upload-button">Submit</button>
-      </form>
-      <p class="message" id="upload-message" role="status" aria-live="polite"></p>
-    </section>
+  <main class="page">
+    <div class="page-head">
+      <div>
+        <h1>Ingestion pipeline</h1>
+        <p class="subtitle">Live view of KnowledgeIngestions and the RabbitMQ queues. Everything runs on this machine.</p>
+      </div>
+      <div class="submit-menu">
+        <button type="button" class="btn btn-primary" id="submit-toggle" aria-expanded="false" aria-controls="submit-popover">
+          <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-upload"></use></svg>
+          Submit a file
+          <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-caret"></use></svg>
+        </button>
+        <div class="popover" id="submit-popover" role="dialog" aria-label="Submit a file" hidden>
+          <form id="upload-form">
+            <label><span>File <span class="hint">DOC, DOCX or PDF</span></span>
+              <input type="file" name="file" required accept=".doc,.docx,.pdf">
+            </label>
+            <label>Owner Node
+              <select name="node_id" id="node-select" required>
+                <option value="">Loading Nodes…</option>
+              </select>
+            </label>
+            <label>Document type
+              <input type="text" name="document_type" list="document-types" placeholder="inspection_report">
+              <datalist id="document-types">
+                <option value="inspection_report">
+                <option value="shift_report">
+                <option value="project_report">
+                <option value="maintenance_record">
+                <option value="procedure">
+                <option value="issue_resolution">
+                <option value="personnel_profile">
+                <option value="node_description">
+                <option value="rfp">
+                <option value="proposal">
+              </datalist>
+            </label>
+            <button type="submit" class="btn btn-primary" id="upload-button">Submit</button>
+          </form>
+          <p class="message" id="upload-message" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+    </div>
 
-    <section class="panel broker" aria-labelledby="broker-title">
-      <div class="panel-head">
+    <div class="flash" id="flash" role="status" hidden>
+      <span id="flash-text"></span>
+      <button type="button" class="icon-button" id="flash-close" aria-label="Dismiss">
+        <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-close"></use></svg>
+      </button>
+    </div>
+
+    <section class="box" aria-labelledby="broker-title">
+      <div class="box-head">
         <h2 id="broker-title">Queues</h2>
         <p class="hint" id="broker-hint">RabbitMQ counts are sampled every few seconds.</p>
       </div>
-      <div class="flow" id="flow">
-        <article class="queue outbox" data-queue="outbox">
-          <h3>Outbox</h3>
-          <p class="role">Postgres rows waiting for the relay</p>
-          <p class="big"><span data-field="unpublished">–</span> <span class="unit">unpublished</span></p>
-          <div class="tokens" data-field="tokens"></div>
-        </article>
-        <div class="arrow" aria-hidden="true">→</div>
-        <div class="lanes">
-          <article class="queue" data-queue="ingestion">
-            <h3>ingestion</h3>
-            <p class="role">Text lane · Docling workers</p>
-            <dl class="counts">
-              <div><dt>waiting</dt><dd data-field="ready">–</dd></div>
-              <div><dt>in progress</dt><dd data-field="unacked">–</dd></div>
-              <div><dt>consumers</dt><dd data-field="consumers">–</dd></div>
+      <div class="graph" id="flow">
+        <div class="graph-row">
+          <article class="queue-node" data-queue="outbox" data-state="idle">
+            <span class="status-icon tone-neutral" data-field="icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-circle"></use></svg></span>
+            <h3>Outbox</h3>
+            <p class="node-role">Postgres rows waiting for the relay</p>
+            <dl class="node-stats">
+              <div><dt>unpublished</dt><dd data-field="unpublished">–</dd></div>
             </dl>
-            <div class="tokens" data-field="tokens"></div>
           </article>
-          <article class="queue" data-queue="ingestion.vision">
-            <h3>ingestion.vision</h3>
-            <p class="role">Vision lane · Gemma + glm-ocr, one at a time</p>
-            <dl class="counts">
+          <article class="queue-node" data-queue="ingestion" data-state="idle">
+            <span class="status-icon tone-neutral" data-field="icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-circle"></use></svg></span>
+            <h3>ingestion</h3>
+            <p class="node-role">Text lane · Docling workers</p>
+            <dl class="node-stats">
               <div><dt>waiting</dt><dd data-field="ready">–</dd></div>
               <div><dt>in progress</dt><dd data-field="unacked">–</dd></div>
               <div><dt>consumers</dt><dd data-field="consumers">–</dd></div>
             </dl>
-            <div class="tokens" data-field="tokens"></div>
+          </article>
+          <article class="queue-node" data-queue="ingestion.vision" data-state="idle">
+            <span class="status-icon tone-neutral" data-field="icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-circle"></use></svg></span>
+            <h3>ingestion.vision</h3>
+            <p class="node-role">Vision lane · Gemma + glm-ocr, one at a time</p>
+            <dl class="node-stats">
+              <div><dt>waiting</dt><dd data-field="ready">–</dd></div>
+              <div><dt>in progress</dt><dd data-field="unacked">–</dd></div>
+              <div><dt>consumers</dt><dd data-field="consumers">–</dd></div>
+            </dl>
+          </article>
+          <article class="queue-node" data-queue="ingestion.chunking" data-state="idle">
+            <span class="status-icon tone-neutral" data-field="icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-circle"></use></svg></span>
+            <h3>ingestion.chunking</h3>
+            <p class="node-role">Chunking lane · chunks and duplicate checks</p>
+            <dl class="node-stats">
+              <div><dt>waiting</dt><dd data-field="ready">–</dd></div>
+              <div><dt>in progress</dt><dd data-field="unacked">–</dd></div>
+              <div><dt>consumers</dt><dd data-field="consumers">–</dd></div>
+            </dl>
           </article>
         </div>
-        <div class="side-queues">
-          <article class="queue retry" data-queue="ingestion.retry">
+        <h3 class="graph-caption">When a step fails</h3>
+        <div class="graph-row">
+          <article class="queue-node" data-queue="ingestion.retry" data-state="idle">
+            <span class="status-icon tone-neutral" data-field="icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-circle"></use></svg></span>
             <h3>ingestion.retry</h3>
-            <p class="role">Failed steps wait here, then go back</p>
-            <dl class="counts">
+            <p class="node-role">Failed steps wait here, then go back</p>
+            <dl class="node-stats">
               <div><dt>waiting</dt><dd data-field="ready">–</dd></div>
               <div><dt>in progress</dt><dd data-field="unacked">–</dd></div>
               <div><dt>consumers</dt><dd data-field="consumers">–</dd></div>
             </dl>
-            <div class="tokens" data-field="tokens"></div>
           </article>
-          <article class="queue dlq" data-queue="ingestion.dlq">
+          <article class="queue-node" data-queue="ingestion.dlq" data-state="idle">
+            <span class="status-icon tone-neutral" data-field="icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-circle"></use></svg></span>
             <h3>ingestion.dlq</h3>
-            <p class="role">Gave up after the last attempt</p>
-            <dl class="counts">
+            <p class="node-role">Gave up after the last attempt</p>
+            <dl class="node-stats">
               <div><dt>waiting</dt><dd data-field="ready">–</dd></div>
               <div><dt>in progress</dt><dd data-field="unacked">–</dd></div>
               <div><dt>consumers</dt><dd data-field="consumers">–</dd></div>
             </dl>
-            <div class="tokens" data-field="tokens"></div>
           </article>
         </div>
       </div>
-      <p class="message error" id="broker-error" hidden></p>
+      <p class="message error box-message" id="broker-error" hidden></p>
     </section>
 
-    <section class="panel board-panel" aria-labelledby="board-title">
-      <div class="panel-head">
-        <h2 id="board-title">Recent ingestions</h2>
-        <p class="hint">Click a completed card to see its extracted blocks.</p>
+    <section class="box" aria-labelledby="ingestions-title">
+      <div class="box-head">
+        <h2 id="ingestions-title">Recent ingestions</h2>
+        <div class="filters" role="group" aria-label="Filter ingestions by status">
+          <button type="button" class="filter" data-filter="all" aria-pressed="true">All <span class="counter" data-count="all">0</span></button>
+          <button type="button" class="filter" data-filter="active" aria-pressed="false">
+            <span class="status-icon tone-attention"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-clock"></use></svg></span>
+            In progress <span class="counter" data-count="active">0</span>
+          </button>
+          <button type="button" class="filter" data-filter="completed" aria-pressed="false">
+            <span class="status-icon tone-success"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-check"></use></svg></span>
+            Completed <span class="counter" data-count="completed">0</span>
+          </button>
+          <button type="button" class="filter" data-filter="failed" aria-pressed="false">
+            <span class="status-icon tone-danger"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-x"></use></svg></span>
+            Failed <span class="counter" data-count="failed">0</span>
+          </button>
+        </div>
       </div>
-      <div class="board" id="board">
-        <div class="column" data-status="queued"><h3>Queued</h3><div class="cards"></div></div>
-        <div class="column" data-status="extracting"><h3>Extracting</h3><div class="cards"></div></div>
-        <div class="column" data-status="reading_pages"><h3>Reading pages</h3><div class="cards"></div></div>
-        <div class="column" data-status="completed"><h3>Completed</h3><div class="cards"></div></div>
-        <div class="column" data-status="failed"><h3>Failed</h3><div class="cards"></div></div>
-      </div>
-      <p class="message error" id="board-error" hidden></p>
+      <ul class="ingestion-list" id="ingestions"></ul>
+      <p class="empty" id="ingestions-empty">No ingestions yet. Submit a file to start one.</p>
+      <p class="message error box-message" id="board-error" hidden></p>
     </section>
   </main>
 
   <dialog id="blocks-dialog" aria-labelledby="blocks-title">
     <div class="dialog-head">
-      <div>
+      <span class="status-icon tone-success" id="blocks-icon"></span>
+      <div class="dialog-title">
         <h2 id="blocks-title">Extracted blocks</h2>
         <p class="hint" id="blocks-summary"></p>
       </div>
-      <button type="button" class="close" id="blocks-close" aria-label="Close">×</button>
+      <button type="button" class="icon-button" id="blocks-close" aria-label="Close">
+        <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-close"></use></svg>
+      </button>
     </div>
-    <ol class="blocks" id="blocks-list"></ol>
+    <section class="dialog-section" id="blocks-flags-section" hidden>
+      <h3>Duplicate flags</h3>
+      <ul class="annotations" id="blocks-flags"></ul>
+    </section>
+    <section class="dialog-section">
+      <h3>Extracted blocks</h3>
+      <ol class="blocks" id="blocks-list"></ol>
+    </section>
   </dialog>
 
   <script src="/pipeline/assets/pipeline.js"></script>

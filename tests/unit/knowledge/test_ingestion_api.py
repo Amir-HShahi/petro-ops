@@ -9,16 +9,21 @@ from tests.fakes.knowledge import (
     FakeNodeDirectory,
     InMemoryEventPublisher,
     InMemoryExtractedContentRepository,
+    InMemoryKnowledgeChunkRepository,
     InMemoryKnowledgeIngestionRepository,
     InMemoryKnowledgeItemRepository,
     InMemoryOutbox,
     InMemorySourceFileStore,
+    InMemoryVersionFingerprintRepository,
 )
 
 from offline_rag.knowledge.application.knowledge_ingestion_queries import (
     KnowledgeIngestionQueries,
 )
 from offline_rag.knowledge.application.ports import IngestionQueueDepth
+from offline_rag.knowledge.application.publish_knowledge_version import (
+    PublishKnowledgeVersionHandler,
+)
 from offline_rag.knowledge.application.reingest_knowledge_item import (
     ReingestKnowledgeItemHandler,
 )
@@ -26,11 +31,14 @@ from offline_rag.knowledge.application.submit_knowledge_item import (
     BYTES_PER_MB,
     SubmitKnowledgeItemHandler,
 )
+from offline_rag.knowledge.domain.chunking import chunk_content
 from offline_rag.knowledge.domain.document_format import DocumentFormat
+from offline_rag.knowledge.domain.duplicate_detection import DuplicateDetector
 from offline_rag.knowledge.domain.extracted_content import ContentBlock, ExtractedContent
 from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.knowledge.infrastructure.errors import QueueMonitorUnavailableError
 from offline_rag.knowledge.interface.api import PROBLEM_MEDIA_TYPE, REQUEST_ID_HEADER, create_app
+from offline_rag.shared_kernel.metadata_record import MetadataRecord
 
 NOW = datetime(2026, 11, 4, 9, 0, tzinfo=UTC)
 NODE_ID = "sp12_inspection_team"
@@ -64,18 +72,42 @@ def queue_monitor() -> FakeIngestionQueueMonitor:
 
 
 @pytest.fixture
+def chunks(ingestions: InMemoryKnowledgeIngestionRepository) -> InMemoryKnowledgeChunkRepository:
+    return InMemoryKnowledgeChunkRepository(ingestions.item_repository)
+
+
+@pytest.fixture
 def client(
     ingestions: InMemoryKnowledgeIngestionRepository,
     contents: InMemoryExtractedContentRepository,
+    chunks: InMemoryKnowledgeChunkRepository,
     queue_monitor: FakeIngestionQueueMonitor,
 ) -> TestClient:
     clock = FakeClock(NOW)
     id_generator = FakeIdGenerator()
+    file_store = InMemorySourceFileStore()
+    fingerprints = InMemoryVersionFingerprintRepository(ingestions.item_repository)
+    detector = DuplicateDetector(
+        overlap_chunk_similarity=0.4, ambiguous_from_similarity=0.25, min_chunk_share=0.2
+    )
     app = create_app(
         submit_handler=SubmitKnowledgeItemHandler(
             ingestion_repository=ingestions,
             node_directory=FakeNodeDirectory([NODE_ID]),
-            source_file_store=InMemorySourceFileStore(),
+            source_file_store=file_store,
+            fingerprint_repository=fingerprints,
+            detector=detector,
+            clock=clock,
+            id_generator=id_generator,
+            event_publisher=InMemoryEventPublisher(),
+            max_file_mb=MAX_FILE_MB,
+        ),
+        publish_version_handler=PublishKnowledgeVersionHandler(
+            ingestion_repository=ingestions,
+            repository=ingestions.item_repository,
+            source_file_store=file_store,
+            fingerprint_repository=fingerprints,
+            detector=detector,
             clock=clock,
             id_generator=id_generator,
             event_publisher=InMemoryEventPublisher(),
@@ -91,6 +123,8 @@ def client(
             ingestion_repository=ingestions,
             repository=ingestions.item_repository,
             extracted_content_repository=contents,
+            chunk_repository=chunks,
+            duplicate_flag_repository=ingestions.flag_repository,
             outbox=InMemoryOutbox(ingestions),
             node_directory=FakeNodeDirectory([NODE_ID, "platform_sp12"]),
             queue_monitor=queue_monitor,
@@ -112,7 +146,8 @@ def _submit(client: TestClient, content: bytes = PDF_CONTENT, **fields: object):
 def _complete(ingestions: InMemoryKnowledgeIngestionRepository, ingestion_id: str) -> None:
     ingestion = ingestions.get_by_id(ingestion_id)
     ingestion.start_extraction(NOW)
-    ingestion.complete(blocks_for_review=0, now=NOW)
+    ingestion.wait_for_chunking(NOW)
+    ingestion.complete(blocks_for_review=0, chunk_count=0, now=NOW)
     ingestions.save(ingestion)
 
 
@@ -333,18 +368,145 @@ def test_pipeline_page_is_served_with_its_assets_when_opened(client: TestClient)
     page = client.get("/pipeline")
     css = client.get("/pipeline/assets/pipeline.css")
     script = client.get("/pipeline/assets/pipeline.js")
+    theme_script = client.get("/pipeline/assets/theme.js")
 
     assert page.status_code == 200
     assert page.headers["content-type"].startswith("text/html")
     assert "/pipeline/assets/pipeline.js" in page.text
+    assert "/pipeline/assets/theme.js" in page.text
     assert css.status_code == 200
     assert script.status_code == 200
+    assert theme_script.status_code == 200
+
+
+def test_pipeline_page_offers_light_dark_and_system_themes_when_opened(client: TestClient):
+    page = client.get("/pipeline").text
+
+    for choice in ("light", "dark", "system"):
+        assert f'data-theme-choice="{choice}"' in page
 
 
 def test_pipeline_page_loads_nothing_from_other_hosts_when_opened(client: TestClient):
-    sources = [
-        client.get(path).text
-        for path in ("/pipeline", "/pipeline/assets/pipeline.css", "/pipeline/assets/pipeline.js")
-    ]
+    paths = (
+        "/pipeline",
+        "/pipeline/assets/pipeline.css",
+        "/pipeline/assets/pipeline.js",
+        "/pipeline/assets/theme.js",
+    )
+    sources = [client.get(path).text for path in paths]
 
     assert not any("http://" in source or "https://" in source for source in sources)
+
+
+def test_status_lists_the_exact_duplicate_flag_when_the_same_file_is_submitted_twice(
+    client: TestClient,
+):
+    first = _submit(client).json()
+    second = _submit(client).json()
+
+    body = client.get(f"/knowledge-ingestions/{second['ingestion_id']}").json()
+
+    assert body["chunk_count"] is None
+    assert body["duplicate_flags"] == [
+        {
+            "kind": "exact",
+            "existing_item_id": first["item_id"],
+            "existing_version_tag": "v1",
+            "score": 1.0,
+            "is_ambiguous": False,
+        }
+    ]
+
+
+def test_recent_ingestions_count_duplicate_flags_when_listed(client: TestClient):
+    _submit(client)
+    _submit(client)
+
+    listed = client.get("/knowledge-ingestions").json()["ingestions"]
+
+    assert [ingestion["duplicate_flag_count"] for ingestion in listed] == [1, 0]
+
+
+def test_new_version_is_queued_with_202_when_a_file_is_published(client: TestClient):
+    item_id = _submit(client).json()["item_id"]
+
+    response = client.post(
+        f"/knowledge-items/{item_id}/versions",
+        files={"file": ("report_v2.pdf", PDF_CONTENT + b" v2", "application/pdf")},
+        data={"change_reason": "Adds 3 readings."},
+    )
+
+    body = response.json()
+    assert response.status_code == 202
+    assert (body["item_id"], body["version_tag"], body["status"]) == (item_id, "v2", "queued")
+    assert response.headers["Location"] == f"/knowledge-ingestions/{body['ingestion_id']}"
+
+
+def test_new_version_is_refused_when_the_file_is_unchanged(client: TestClient):
+    item_id = _submit(client).json()["item_id"]
+
+    response = client.post(
+        f"/knowledge-items/{item_id}/versions",
+        files={"file": ("report.pdf", PDF_CONTENT, "application/pdf")},
+        data={"change_reason": "Nothing."},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["type"] == "KNOWLEDGE_VERSION_UNCHANGED"
+
+
+def test_request_is_invalid_when_a_version_is_published_without_a_change_reason(
+    client: TestClient,
+):
+    item_id = _submit(client).json()["item_id"]
+
+    response = client.post(
+        f"/knowledge-items/{item_id}/versions",
+        files={"file": ("report_v2.pdf", PDF_CONTENT + b" v2", "application/pdf")},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["type"] == "KNOWLEDGE_REQUEST_INVALID"
+
+
+def test_chunks_are_returned_with_their_source_when_the_version_is_chunked(
+    client: TestClient,
+    ingestions: InMemoryKnowledgeIngestionRepository,
+    chunks: InMemoryKnowledgeChunkRepository,
+):
+    item_id = _submit(client).json()["item_id"]
+    chunks.replace(
+        item_id,
+        VersionTag("v1"),
+        chunk_content(
+            CONTENT,
+            item_id=item_id,
+            version_tag=VersionTag("v1"),
+            metadata=MetadataRecord(),
+            count_tokens=len,
+            target_tokens=400,
+            max_tokens=512,
+            overlap_share=0.0,
+        ),
+    )
+
+    body = client.get(f"/knowledge-items/{item_id}/versions/v1/chunks").json()
+
+    assert (body["version_tag"], body["is_retrievable"], body["chunk_count"]) == ("v1", True, 1)
+    assert body["chunks"][0]["chunk_id"] == f"{item_id}/v1/0"
+    assert (body["chunks"][0]["page_start"], body["chunks"][0]["page_end"]) == (1, 1)
+
+
+def test_old_chunks_are_shown_as_not_retrievable_when_a_newer_version_is_active(
+    client: TestClient,
+):
+    item_id = _submit(client).json()["item_id"]
+    client.post(
+        f"/knowledge-items/{item_id}/versions",
+        files={"file": ("report_v2.pdf", PDF_CONTENT + b" v2", "application/pdf")},
+        data={"change_reason": "Adds 3 readings."},
+    )
+
+    body = client.get(f"/knowledge-items/{item_id}/versions/v1/chunks").json()
+
+    assert (body["is_retrievable"], body["active_version_tag"]) == (False, "v2")
