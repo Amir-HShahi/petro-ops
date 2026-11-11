@@ -83,6 +83,15 @@
     <symbol id="i-close" viewBox="0 0 16 16">
       <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="m4 4 8 8M12 4l-8 8"/>
     </symbol>
+    <symbol id="i-retry" viewBox="0 0 16 16">
+      <g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M13.25 8A5.25 5.25 0 1 1 11.7 4.3"/>
+        <path d="M13.25 2.5v2.5H10.75"/>
+      </g>
+    </symbol>
+    <symbol id="i-present" viewBox="0 0 16 16">
+      <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/>
+    </symbol>
   </svg>
 
   <header class="site-header">
@@ -120,42 +129,52 @@
     <div class="page-head">
       <div>
         <h1>Ingestion pipeline</h1>
-        <p class="subtitle">Live view of KnowledgeIngestions and the RabbitMQ queues. Everything runs on this machine.</p>
+        <p class="summary" aria-live="off">
+          <span class="summary-item tone-active"><b data-count="active">0</b> in flight</span>
+          <span class="summary-item tone-done"><b data-count="completed">0</b> completed</span>
+          <span class="summary-item tone-fail"><b data-count="failed">0</b> failed</span>
+        </p>
       </div>
-      <div class="submit-menu">
-        <button type="button" class="btn btn-primary" id="submit-toggle" aria-expanded="false" aria-controls="submit-popover">
-          <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-upload"></use></svg>
-          Submit a file
-          <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-caret"></use></svg>
+      <div class="head-actions">
+        <button type="button" class="btn" id="present-toggle" aria-pressed="false" title="Fill the screen and hide the history (Esc to leave)">
+          <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-present"></use></svg>
+          Present
         </button>
-        <div class="popover" id="submit-popover" role="dialog" aria-label="Submit a file" hidden>
-          <form id="upload-form">
-            <label><span>File <span class="hint">DOC, DOCX or PDF</span></span>
-              <input type="file" name="file" required accept=".doc,.docx,.pdf">
-            </label>
-            <label>Owner Node
-              <select name="node_id" id="node-select" required>
-                <option value="">Loading Nodes…</option>
-              </select>
-            </label>
-            <label>Document type
-              <input type="text" name="document_type" list="document-types" placeholder="inspection_report">
-              <datalist id="document-types">
-                <option value="inspection_report">
-                <option value="shift_report">
-                <option value="project_report">
-                <option value="maintenance_record">
-                <option value="procedure">
-                <option value="issue_resolution">
-                <option value="personnel_profile">
-                <option value="node_description">
-                <option value="rfp">
-                <option value="proposal">
-              </datalist>
-            </label>
-            <button type="submit" class="btn btn-primary" id="upload-button">Submit</button>
-          </form>
-          <p class="message" id="upload-message" role="status" aria-live="polite"></p>
+        <div class="submit-menu">
+          <button type="button" class="btn btn-primary" id="submit-toggle" aria-expanded="false" aria-controls="submit-popover">
+            <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-upload"></use></svg>
+            Submit files
+            <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-caret"></use></svg>
+          </button>
+          <div class="popover" id="submit-popover" role="dialog" aria-label="Submit files" hidden>
+            <form id="upload-form">
+              <label><span>Files <span class="hint">DOC, DOCX or PDF, one or more</span></span>
+                <input type="file" name="file" id="file-input" required multiple accept=".doc,.docx,.pdf">
+              </label>
+              <label>Owner Node
+                <select name="node_id" id="node-select" required>
+                  <option value="">Loading Nodes…</option>
+                </select>
+              </label>
+              <label>Document type
+                <input type="text" name="document_type" list="document-types" placeholder="inspection_report">
+                <datalist id="document-types">
+                  <option value="inspection_report">
+                  <option value="shift_report">
+                  <option value="project_report">
+                  <option value="maintenance_record">
+                  <option value="procedure">
+                  <option value="issue_resolution">
+                  <option value="personnel_profile">
+                  <option value="node_description">
+                  <option value="rfp">
+                  <option value="proposal">
+                </datalist>
+              </label>
+              <button type="submit" class="btn btn-primary" id="upload-button">Submit</button>
+            </form>
+            <p class="message" id="upload-message" role="status" aria-live="polite"></p>
+          </div>
         </div>
       </div>
     </div>
@@ -167,80 +186,115 @@
       </button>
     </div>
 
-    <section class="box" aria-labelledby="broker-title">
-      <div class="box-head">
-        <h2 id="broker-title">Queues</h2>
-        <p class="hint" id="broker-hint">RabbitMQ counts are sampled every few seconds.</p>
+    <section class="board" aria-label="Where each document is in the pipeline">
+      <div class="track">
+        <article class="station" data-station="queued" data-state="idle" data-queue="outbox">
+          <header class="station-head">
+            <span class="station-badge" aria-hidden="true">1</span>
+            <div class="station-title">
+              <h3>Queued</h3>
+              <p>Saved, on its way to RabbitMQ</p>
+            </div>
+            <span class="station-count" data-field="count">0</span>
+          </header>
+          <ul class="chips" data-chips="queued"></ul>
+          <dl class="station-stats"><div><dt>in outbox</dt><dd data-field="unpublished">–</dd></div></dl>
+        </article>
+        <div class="link" data-after="queued" data-flow="off" aria-hidden="true"></div>
+        <article class="station" data-station="extracting" data-state="idle" data-queue="ingestion">
+          <header class="station-head">
+            <span class="station-badge" aria-hidden="true">2</span>
+            <div class="station-title">
+              <h3>Extracting</h3>
+              <p>Text lane · Docling</p>
+            </div>
+            <span class="station-count" data-field="count">0</span>
+          </header>
+          <ul class="chips" data-chips="extracting"></ul>
+          <dl class="station-stats"><div><dt>waiting</dt><dd data-field="ready">–</dd></div><div><dt>working</dt><dd data-field="unacked">–</dd></div><div><dt>workers</dt><dd data-field="consumers">–</dd></div></dl>
+        </article>
+        <div class="link" data-after="extracting" data-flow="off" aria-hidden="true"></div>
+        <article class="station" data-station="reading_pages" data-state="idle" data-queue="ingestion.vision">
+          <header class="station-head">
+            <span class="station-badge" aria-hidden="true">3</span>
+            <div class="station-title">
+              <h3>Reading pages</h3>
+              <p>Vision lane · one at a time</p>
+            </div>
+            <span class="station-count" data-field="count">0</span>
+          </header>
+          <p class="station-note">Scanned pages only</p>
+          <ul class="chips" data-chips="reading_pages"></ul>
+          <dl class="station-stats"><div><dt>waiting</dt><dd data-field="ready">–</dd></div><div><dt>working</dt><dd data-field="unacked">–</dd></div><div><dt>workers</dt><dd data-field="consumers">–</dd></div></dl>
+        </article>
+        <div class="link" data-after="reading_pages" data-flow="off" aria-hidden="true"></div>
+        <article class="station" data-station="chunking" data-state="idle" data-queue="ingestion.chunking">
+          <header class="station-head">
+            <span class="station-badge" aria-hidden="true">4</span>
+            <div class="station-title">
+              <h3>Chunking</h3>
+              <p>Chunks and duplicate checks</p>
+            </div>
+            <span class="station-count" data-field="count">0</span>
+          </header>
+          <ul class="chips" data-chips="chunking"></ul>
+          <dl class="station-stats"><div><dt>waiting</dt><dd data-field="ready">–</dd></div><div><dt>working</dt><dd data-field="unacked">–</dd></div><div><dt>workers</dt><dd data-field="consumers">–</dd></div></dl>
+        </article>
+        <div class="link" data-after="chunking" data-flow="off" aria-hidden="true"></div>
+        <article class="station" data-station="completed" data-state="idle">
+          <header class="station-head">
+            <span class="station-badge" aria-hidden="true"><svg class="icon" width="20" height="20"><use href="#i-check"></use></svg></span>
+            <div class="station-title">
+              <h3>Completed</h3>
+              <p>Chunks stored, duplicates flagged</p>
+            </div>
+            <span class="station-count" data-field="count">0</span>
+          </header>
+          <ul class="chips" data-chips="completed"></ul>
+        </article>
       </div>
-      <div class="graph" id="flow">
-        <div class="graph-row">
-          <article class="queue-node" data-queue="outbox" data-state="idle">
-            <span class="status-icon tone-neutral" data-field="icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-circle"></use></svg></span>
-            <h3>Outbox</h3>
-            <p class="node-role">Postgres rows waiting for the relay</p>
-            <dl class="node-stats">
-              <div><dt>unpublished</dt><dd data-field="unpublished">–</dd></div>
-            </dl>
-          </article>
-          <article class="queue-node" data-queue="ingestion" data-state="idle">
-            <span class="status-icon tone-neutral" data-field="icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-circle"></use></svg></span>
-            <h3>ingestion</h3>
-            <p class="node-role">Text lane · Docling workers</p>
-            <dl class="node-stats">
-              <div><dt>waiting</dt><dd data-field="ready">–</dd></div>
-              <div><dt>in progress</dt><dd data-field="unacked">–</dd></div>
-              <div><dt>consumers</dt><dd data-field="consumers">–</dd></div>
-            </dl>
-          </article>
-          <article class="queue-node" data-queue="ingestion.vision" data-state="idle">
-            <span class="status-icon tone-neutral" data-field="icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-circle"></use></svg></span>
-            <h3>ingestion.vision</h3>
-            <p class="node-role">Vision lane · Gemma + glm-ocr, one at a time</p>
-            <dl class="node-stats">
-              <div><dt>waiting</dt><dd data-field="ready">–</dd></div>
-              <div><dt>in progress</dt><dd data-field="unacked">–</dd></div>
-              <div><dt>consumers</dt><dd data-field="consumers">–</dd></div>
-            </dl>
-          </article>
-          <article class="queue-node" data-queue="ingestion.chunking" data-state="idle">
-            <span class="status-icon tone-neutral" data-field="icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-circle"></use></svg></span>
-            <h3>ingestion.chunking</h3>
-            <p class="node-role">Chunking lane · chunks and duplicate checks</p>
-            <dl class="node-stats">
-              <div><dt>waiting</dt><dd data-field="ready">–</dd></div>
-              <div><dt>in progress</dt><dd data-field="unacked">–</dd></div>
-              <div><dt>consumers</dt><dd data-field="consumers">–</dd></div>
-            </dl>
-          </article>
-        </div>
-        <h3 class="graph-caption">When a step fails</h3>
-        <div class="graph-row">
-          <article class="queue-node" data-queue="ingestion.retry" data-state="idle">
-            <span class="status-icon tone-neutral" data-field="icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-circle"></use></svg></span>
-            <h3>ingestion.retry</h3>
-            <p class="node-role">Failed steps wait here, then go back</p>
-            <dl class="node-stats">
-              <div><dt>waiting</dt><dd data-field="ready">–</dd></div>
-              <div><dt>in progress</dt><dd data-field="unacked">–</dd></div>
-              <div><dt>consumers</dt><dd data-field="consumers">–</dd></div>
-            </dl>
-          </article>
-          <article class="queue-node" data-queue="ingestion.dlq" data-state="idle">
-            <span class="status-icon tone-neutral" data-field="icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-circle"></use></svg></span>
-            <h3>ingestion.dlq</h3>
-            <p class="node-role">Gave up after the last attempt</p>
-            <dl class="node-stats">
-              <div><dt>waiting</dt><dd data-field="ready">–</dd></div>
-              <div><dt>in progress</dt><dd data-field="unacked">–</dd></div>
-              <div><dt>consumers</dt><dd data-field="consumers">–</dd></div>
-            </dl>
-          </article>
-        </div>
+      <h2 class="lane-caption">When a step fails</h2>
+      <div class="fail-lane">
+        <article class="station compact" data-station="retry" data-state="idle" data-queue="ingestion.retry">
+          <header class="station-head">
+            <span class="station-badge" aria-hidden="true"><svg class="icon" width="20" height="20"><use href="#i-retry"></use></svg></span>
+            <div class="station-title">
+              <h3>Retry</h3>
+              <p>Failed steps wait here, then go back</p>
+            </div>
+            <span class="station-count" data-field="count">0</span>
+          </header>
+          <ul class="chips" data-chips="retry"></ul>
+          <dl class="station-stats"><div><dt>waiting</dt><dd data-field="ready">–</dd></div><div><dt>working</dt><dd data-field="unacked">–</dd></div><div><dt>workers</dt><dd data-field="consumers">–</dd></div></dl>
+        </article>
+        <article class="station compact" data-station="dlq" data-state="idle" data-queue="ingestion.dlq">
+          <header class="station-head">
+            <span class="station-badge" aria-hidden="true"><svg class="icon" width="20" height="20"><use href="#i-warning"></use></svg></span>
+            <div class="station-title">
+              <h3>Dead letter</h3>
+              <p>Gave up after the last attempt</p>
+            </div>
+            <span class="station-count" data-field="count">0</span>
+          </header>
+          <ul class="chips" data-chips="dlq"></ul>
+          <dl class="station-stats"><div><dt>waiting</dt><dd data-field="ready">–</dd></div><div><dt>working</dt><dd data-field="unacked">–</dd></div><div><dt>workers</dt><dd data-field="consumers">–</dd></div></dl>
+        </article>
+        <article class="station compact" data-station="failed" data-state="idle">
+          <header class="station-head">
+            <span class="station-badge" aria-hidden="true"><svg class="icon" width="20" height="20"><use href="#i-x"></use></svg></span>
+            <div class="station-title">
+              <h3>Failed</h3>
+              <p>Ingestions that ended with an error</p>
+            </div>
+            <span class="station-count" data-field="count">0</span>
+          </header>
+          <ul class="chips" data-chips="failed"></ul>
+        </article>
       </div>
       <p class="message error box-message" id="broker-error" hidden></p>
     </section>
 
-    <section class="box" aria-labelledby="ingestions-title">
+    <section class="box history" aria-labelledby="ingestions-title">
       <div class="box-head">
         <h2 id="ingestions-title">Recent ingestions</h2>
         <div class="filters" role="group" aria-label="Filter ingestions by status">
@@ -260,7 +314,7 @@
         </div>
       </div>
       <ul class="ingestion-list" id="ingestions"></ul>
-      <p class="empty" id="ingestions-empty">No ingestions yet. Submit a file to start one.</p>
+      <p class="empty" id="ingestions-empty">No ingestions yet. Submit files to start one.</p>
       <p class="message error box-message" id="board-error" hidden></p>
     </section>
   </main>
@@ -283,6 +337,22 @@
     <section class="dialog-section">
       <h3>Extracted blocks</h3>
       <ol class="blocks" id="blocks-list"></ol>
+    </section>
+  </dialog>
+
+  <dialog id="chunks-dialog" aria-labelledby="chunks-title">
+    <div class="dialog-head">
+      <span class="status-icon tone-success" id="chunks-icon"></span>
+      <div class="dialog-title">
+        <h2 id="chunks-title">Chunks</h2>
+        <p class="hint" id="chunks-summary"></p>
+      </div>
+      <button type="button" class="icon-button" id="chunks-close" aria-label="Close">
+        <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-close"></use></svg>
+      </button>
+    </div>
+    <section class="dialog-section">
+      <ol class="blocks" id="chunks-list"></ol>
     </section>
   </dialog>
 

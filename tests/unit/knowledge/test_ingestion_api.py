@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime
 
 import pytest
@@ -384,6 +385,30 @@ def test_pipeline_page_offers_light_dark_and_system_themes_when_opened(client: T
 
     for choice in ("light", "dark", "system"):
         assert f'data-theme-choice="{choice}"' in page
+
+
+def test_pipeline_page_has_a_stage_for_each_ingestion_status_when_opened(client: TestClient):
+    page = client.get("/pipeline").text
+
+    for stage in ("queued", "extracting", "reading_pages", "chunking", "completed", "failed"):
+        assert f'data-station="{stage}"' in page
+    queues = ("ingestion", "ingestion.vision", "ingestion.chunking", "ingestion.retry")
+    for queue in (*queues, "ingestion.dlq"):
+        assert f'data-queue="{queue}"' in page
+
+
+def test_pipeline_page_has_a_dialog_for_the_chunks_when_opened(client: TestClient):
+    page = client.get("/pipeline").text
+    script = client.get("/pipeline/assets/pipeline.js").text
+
+    assert 'id="chunks-dialog"' in page
+    assert "/chunks?limit=" in script
+
+
+def test_pipeline_page_accepts_several_files_in_one_submission_when_opened(client: TestClient):
+    page = client.get("/pipeline").text
+
+    assert re.search(r'<input type="file"[^>]*\bmultiple\b', page)
 
 
 def test_pipeline_page_loads_nothing_from_other_hosts_when_opened(client: TestClient):
