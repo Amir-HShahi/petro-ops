@@ -92,6 +92,24 @@ type = "layers"
 containers = ["offline_rag.knowledge", "offline_rag.organization"]
 layers = ["interface", "infrastructure", "application", "domain"]
 
+[[tool.importlinter.contracts]]
+name = "Knowledge reads Nodes only through the queries of Organizational Hierarchy"
+type = "forbidden"
+source_modules = ["offline_rag.knowledge"]
+forbidden_modules = [
+    "offline_rag.organization.domain",
+    "offline_rag.organization.infrastructure",
+    "offline_rag.organization.interface",
+]
+# The queries import the Node aggregate themselves; only direct imports are refused.
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Knowledge domain and use cases do not depend on Organizational Hierarchy"
+type = "forbidden"
+source_modules = ["offline_rag.knowledge.domain", "offline_rag.knowledge.application"]
+forbidden_modules = ["offline_rag.organization"]
+
 [tool.commitizen]
 name = "cz_conventional_commits"
 version_provider = "uv"

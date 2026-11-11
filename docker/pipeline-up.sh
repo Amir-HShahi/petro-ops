@@ -61,6 +61,10 @@ fi
 echo "Creating the tables…"
 uv run alembic upgrade head
 
+# Files are accepted only for registered Nodes; Nodes already registered are kept.
+echo "Registering the Nodes of fixtures/registry/nodes.csv…"
+LOG_LEVEL=warning uv run organization import-nodes >/dev/null
+
 # Read the settings through Settings, so .env and environment variables apply as in the core.
 read -r data_dir api_host api_port ollama_url < <(
   .venv/bin/python -c 'from offline_rag.settings import Settings

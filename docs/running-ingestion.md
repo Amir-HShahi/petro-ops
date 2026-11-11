@@ -80,10 +80,11 @@ docker compose -f docker/docker-compose.yml exec rabbitmq rabbitmqctl list_polic
 
 Stop everything with `docker compose -f docker/docker-compose.yml down`; add `-v` to delete the data too.
 
-Create the tables:
+Create the tables, then register the case-study Nodes. A file is accepted only for a Node registered in Postgres, and running the import again keeps the Nodes already there:
 
 ```bash
 uv run alembic upgrade head
+uv run organization import-nodes
 ```
 
 ## Start everything with one command
@@ -92,7 +93,7 @@ uv run alembic upgrade head
 docker/pipeline-up.sh
 ```
 
-It starts Postgres and RabbitMQ, applies the vision-queue policy, creates the tables, then starts the relay, one text worker, the vision worker, the chunking worker and the API. It prints the pipeline page URL, and each process logs to `data/logs/<name>.log`. Ctrl+C stops the processes; the containers keep running.
+It starts Postgres and RabbitMQ, applies the vision-queue policy, creates the tables, registers the Nodes of `fixtures/registry/nodes.csv`, then starts the relay, one text worker, the vision worker, the chunking worker and the API. It prints the pipeline page URL, and each process logs to `data/logs/<name>.log`. Ctrl+C stops the processes; the containers keep running.
 
 | Option | Effect |
 |---|---|

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import structlog
 
-from offline_rag.bootstrap import build_knowledge
+from offline_rag.bootstrap import build_knowledge, build_organization
 from offline_rag.knowledge.application.commands import RunIngestionStep
 from offline_rag.knowledge.application.ports import IngestionLane
 from offline_rag.knowledge.infrastructure.postgres_database import PostgresDatabase
@@ -13,6 +13,7 @@ from offline_rag.knowledge.infrastructure.postgres_knowledge_item_repository imp
     PostgresKnowledgeItemRepository,
 )
 from offline_rag.knowledge.interface.cli import EXIT_FAILED, EXIT_OK, main
+from offline_rag.organization.interface.node_registry_file import read_node_registry
 from offline_rag.settings import Settings
 
 pytestmark = pytest.mark.integration
@@ -28,8 +29,7 @@ def _reset_logging() -> Iterator[None]:
     structlog.reset_defaults()
 
 
-@pytest.fixture
-def settings(tmp_path: Path, postgres_url: str) -> Settings:
+def _settings(tmp_path: Path, postgres_url: str) -> Settings:
     return Settings(
         data_dir=tmp_path / "data",
         database_url=postgres_url,
@@ -38,6 +38,23 @@ def settings(tmp_path: Path, postgres_url: str) -> Settings:
         prompts_dir=ROOT / "prompts",
         model_manifest_path=ROOT / "models" / "manifest.yaml",
     )
+
+
+def _register_case_study_nodes(settings: Settings) -> None:
+    organization = build_organization(settings)
+    try:
+        for command in read_node_registry(settings.node_registry_path):
+            organization.register_node_handler.register(command)
+    finally:
+        organization.close()
+
+
+@pytest.fixture
+def settings(tmp_path: Path, postgres_url: str) -> Settings:
+    """Return settings for a schema whose Nodes are the case-study registry."""
+    registered = _settings(tmp_path, postgres_url)
+    _register_case_study_nodes(registered)
+    return registered
 
 
 @pytest.mark.parametrize(
@@ -121,6 +138,22 @@ def test_problem_details_are_printed_when_submission_fails(
 
 
 INSPECTION_DOCX = FIXTURE_DOCS / "synthetic/inspection_sp12_riser_r3_2024.docx"
+
+
+def test_submission_is_refused_until_organization_registers_the_node(
+    tmp_path: Path, postgres_url: str, capsys: pytest.CaptureFixture[str]
+):
+    settings = _settings(tmp_path, postgres_url)
+    arguments = ["submit", str(INSPECTION_DOCX), "--node", "sp12_inspection_team"]
+
+    refused = _problem(arguments, settings, capsys)
+    _register_case_study_nodes(settings)
+    accepted = _run(arguments, settings, capsys)
+
+    assert refused["type"] == "KNOWLEDGE_OWNER_NODE_NOT_FOUND"
+    assert accepted["status"] == "queued"
+
+
 INSPECTION_V2_DOCX = FIXTURE_DOCS / "cases/inspection_sp12_riser_r3_2026_v2.docx"
 
 

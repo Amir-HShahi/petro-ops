@@ -43,7 +43,7 @@ The core loads one large model at a time and unloads it when its work is done, b
 
 Submitting a file registers it and queues a KnowledgeIngestion; workers do the rest (ADR 0005):
 
-1. **Register.** The format is read from the file's content (DOC, DOCX or PDF). The file is kept in `data/source_files/`, and the KnowledgeItem, its ingestion and the message that starts it are stored in Postgres in one transaction. The owning Node must be in `fixtures/registry/nodes.csv`.
+1. **Register.** The format is read from the file's content (DOC, DOCX or PDF). The file is kept in `data/source_files/`, and the KnowledgeItem, its ingestion and the message that starts it are stored in Postgres in one transaction. The owning Node must be registered in Organizational Hierarchy; `uv run organization import-nodes` registers the case-study Nodes.
 2. **Extract** (text worker). Docling reads the text and tables in order, with the page (PDF) or heading path (DOC, DOCX) of each block. DOC files are converted by LibreOffice first.
 3. **Read pages** (vision worker). PDF pages without a text layer are read by Gemma, and every table on them is checked against `glm-ocr`. A table the two models read differently is marked for human review. This takes about a minute per page.
 
