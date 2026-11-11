@@ -3,14 +3,14 @@
 The Layers exist from the start (docs/domain-model.md, section 11), so they are
 loaded here, with the values of `fixtures/registry/layers.csv` (spec §6.2, §6.4).
 
-Revision ID: 0004
-Revises: 0003
+Revision ID: 0005
+Revises: 0004
 """
 
 from alembic import op
 
-revision = "0004"
-down_revision = "0003"
+revision = "0005"
+down_revision = "0004"
 branch_labels = None
 depends_on = None
 
