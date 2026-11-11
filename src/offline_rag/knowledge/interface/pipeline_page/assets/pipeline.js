@@ -1,10 +1,12 @@
 // Live pipeline page (ADR 0008). Polls the ingestion API on this machine about once
-// a second: queue counts fill the graph and each recent ingestion is a row in the list.
+// a second: each recent ingestion is a card on the stage it is in, queue counts fill the
+// stage stats, and the history list below keeps one row per ingestion.
 "use strict";
 
 const POLL_INTERVAL_MS = 1000;
 const RECENT_INGESTIONS = 20;
 const MAX_BLOCKS = 500;
+const MAX_CHUNKS = 500;
 const FLASH_MS = 6000;
 const SHORT_ID_LENGTH = 8;
 
@@ -17,12 +19,12 @@ const STATUS_VIEWS = {
   completed: { label: "Completed", icon: "check", tone: "success" },
   failed: { label: "Failed", icon: "x", tone: "danger" },
 };
-const QUEUE_STATE_VIEWS = {
-  idle: { icon: "circle", tone: "neutral" },
-  waiting: { icon: "clock", tone: "attention" },
-  running: { icon: "spinner", tone: "attention" },
-  failed: { icon: "x", tone: "danger" },
-};
+// A card sits on the stage of its status; a failed ingestion sits in the failure lane.
+const STAGE_KEYS = ["queued", "extracting", "reading_pages", "chunking", "completed", "failed"];
+const WORKING_STAGES = ["queued", "extracting", "reading_pages", "chunking"];
+const CARDS_PER_STAGE = { queued: 3, extracting: 3, reading_pages: 3, chunking: 3, completed: 3, failed: 3 };
+const MOVE_MS = 800;
+const ARRIVE_MS = 1000;
 const FLAG_LABELS = {
   exact: "Exact duplicate of",
   near: "Near duplicate of",
@@ -37,7 +39,10 @@ const FILTERS = {
 };
 
 const rowsById = new Map();
-const lastQueueCounts = new Map();
+const cardsById = new Map();
+const stageCounts = new Map();
+const queueCounts = new Map();
+const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let activeFilter = "all";
 let flashTimer = null;
 
@@ -111,6 +116,7 @@ async function loadNodes() {
 function setUpUpload() {
   const form = document.getElementById("upload-form");
   const button = document.getElementById("upload-button");
+  const fileInput = document.getElementById("file-input");
   const message = document.getElementById("upload-message");
   const toggle = document.getElementById("submit-toggle");
   const popover = document.getElementById("submit-popover");
@@ -132,24 +138,49 @@ function setUpUpload() {
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const formData = new FormData(form);
-    if (!formData.get("document_type")) formData.delete("document_type");
+    const files = Array.from(fileInput.files);
+    const shared = new FormData(form);
+    shared.delete("file");
+    if (!shared.get("document_type")) shared.delete("document_type");
     button.disabled = true;
     message.className = "message";
-    message.textContent = "Uploading…";
-    try {
-      const receipt = await getJson("/knowledge-items", { method: "POST", body: formData });
+
+    // The API takes one file per request, so each file gets its own ingestion. One
+    // refused file must not stop the others.
+    const failed = [];
+    let queued = 0;
+    for (const [index, file] of files.entries()) {
+      message.textContent = `Uploading ${index + 1} of ${files.length}…`;
+      const body = new FormData();
+      for (const [name, value] of shared) body.append(name, value);
+      body.append("file", file);
+      try {
+        await getJson("/knowledge-items", { method: "POST", body });
+        queued += 1;
+      } catch (error) {
+        failed.push({ file, error });
+      }
+    }
+
+    if (queued > 0) {
+      showFlash(queued === 1 ? "Queued 1 file." : `Queued ${queued} files.`);
+      refreshIngestions();
+    }
+    if (failed.length === 0) {
       message.textContent = "";
       form.reset();
       setOpen(false);
-      showFlash(`Queued as ingestion ${receipt.ingestion_id}.`);
-      refreshIngestions();
-    } catch (error) {
+    } else {
+      // Leave only the refused files selected, so Submit retries just those.
+      const remaining = new DataTransfer();
+      for (const { file } of failed) remaining.items.add(file);
+      fileInput.files = remaining.files;
       message.className = "message error";
-      showError(message, error);
-    } finally {
-      button.disabled = false;
+      message.textContent = failed
+        .map(({ file, error }) => `${file.name}: ${error.code ? `${error.code}: ` : ""}${error.message}`)
+        .join("\n");
     }
+    button.disabled = false;
   });
   document.getElementById("flash-close").addEventListener("click", () => {
     document.getElementById("flash").hidden = true;
@@ -214,6 +245,7 @@ function fillRow(entry) {
   if (isCompleted) title.type = "button";
   const headline = element("div", "ingestion-headline");
   headline.append(title, element("span", "pill", ingestion.document_format.toUpperCase()));
+  if (isCompleted) headline.append(actionButton("Chunks", () => openChunks(ingestion)));
 
   const meta = element("p", "ingestion-meta");
   meta.append(element(
@@ -264,7 +296,7 @@ function applyFilter() {
   const empty = document.getElementById("ingestions-empty");
   empty.hidden = visible > 0;
   empty.textContent = rowsById.size === 0
-    ? "No ingestions yet. Submit a file to start one."
+    ? "No ingestions yet. Submit files to start one."
     : "No ingestions match this filter.";
 }
 
@@ -296,9 +328,10 @@ function placeRows(ingestions) {
   }
 
   for (const [name, matches] of Object.entries(FILTERS)) {
-    const count = ingestions.filter((ingestion) => matches(ingestion.status)).length;
-    document.querySelector(`[data-count="${name}"]`).textContent = String(count);
+    const count = String(ingestions.filter((ingestion) => matches(ingestion.status)).length);
+    for (const target of document.querySelectorAll(`[data-count="${name}"]`)) target.textContent = count;
   }
+  placeCards(ingestions);
   applyFilter();
 }
 
@@ -313,19 +346,178 @@ function setUpFilters() {
   }
 }
 
-function queueState(name, ready, unacked) {
-  if (name === "ingestion.dlq" && ready > 0) return "failed";
-  if (unacked > 0) return "running";
-  return ready > 0 ? "waiting" : "idle";
+function stageElement(key) {
+  return document.querySelector(`.station[data-station="${key}"]`);
+}
+
+function stageOf(status) {
+  return status === "failed" ? "failed" : status;
+}
+
+function createCard(ingestion) {
+  return { el: element("li", "chip"), ingestion, signature: null, stage: null };
+}
+
+function fillCard(entry) {
+  const { el, ingestion } = entry;
+  el.dataset.stage = stageOf(ingestion.status);
+  el.title = `Ingestion ${ingestion.ingestion_id}`;
+
+  // A break hint after each _, . or - keeps long names from splitting inside a word.
+  const name = element("span", "chip-name");
+  name.dir = "auto";
+  name.append(...ingestion.source_file_name.split(/(?<=[_.-])/).flatMap((part) => [part, document.createElement("wbr")]));
+  const meta = element("span", "chip-meta");
+  entry.timeText = element("span", "chip-time");
+  meta.append(element("span", "pill", ingestion.document_format.toUpperCase()), entry.timeText);
+  if (ingestion.attempts > 1) meta.append(element("span", "pill attention", `attempt ${ingestion.attempts}`));
+  if (ingestion.chunk_count !== null) meta.append(element("span", "pill", `${ingestion.chunk_count} chunks`));
+  if (ingestion.failure_code) meta.append(element("span", "chip-failure", ingestion.failure_code));
+  el.replaceChildren(name, meta);
+  if (ingestion.status === "completed") {
+    const actions = element("span", "chip-actions");
+    actions.append(
+      actionButton("Chunks", () => openChunks(ingestion)),
+      actionButton("Blocks", () => openBlocks(ingestion)),
+    );
+    el.append(actions);
+  }
+}
+
+function actionButton(label, onClick) {
+  const button = element("button", "chip-action", label);
+  button.type = "button";
+  button.addEventListener("click", (event) => {
+    // The history rows open the blocks on a click anywhere; this button must not also do that.
+    event.stopPropagation();
+    onClick();
+  });
+  return button;
+}
+
+function refreshCardTime(entry) {
+  const { ingestion } = entry;
+  const isFinished = ingestion.status === "completed" || ingestion.status === "failed";
+  const end = isFinished ? Date.parse(ingestion.updated_at) : Date.now();
+  entry.timeText.textContent = formatDuration((end - Date.parse(ingestion.created_at)) / 1000);
+}
+
+// A card that moved is animated from where it was to where it is now (FLIP), so the
+// audience sees the document travel to the next stage instead of blinking there.
+function animateCards(before) {
+  if (prefersReducedMotion.matches) return;
+  for (const [id, entry] of cardsById) {
+    if (entry.el.hidden) continue;
+    const to = entry.el.getBoundingClientRect();
+    const from = before.get(id);
+    const frames = from
+      ? [{ transform: `translate(${from.left - to.left}px, ${from.top - to.top}px)` }, { transform: "none" }]
+      : [{ opacity: 0, transform: "translateY(-1rem) scale(0.95)" }, { opacity: 1, transform: "none" }];
+    if (from && Math.abs(from.left - to.left) < 2 && Math.abs(from.top - to.top) < 2) continue;
+    entry.el.classList.add("is-moving");
+    const animation = entry.el.animate(frames, { duration: MOVE_MS, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" });
+    animation.finished.then(() => entry.el.classList.remove("is-moving"), () => {});
+  }
+}
+
+function placeCards(ingestions) {
+  const before = new Map();
+  for (const [id, entry] of cardsById) {
+    if (!entry.el.hidden && entry.el.isConnected) before.set(id, entry.el.getBoundingClientRect());
+  }
+
+  const byStage = new Map(STAGE_KEYS.map((key) => [key, []]));
+  const seen = new Set();
+  for (const ingestion of ingestions) {
+    seen.add(ingestion.ingestion_id);
+    let entry = cardsById.get(ingestion.ingestion_id);
+    if (!entry) {
+      entry = createCard(ingestion);
+      cardsById.set(ingestion.ingestion_id, entry);
+    }
+    const signature = JSON.stringify(ingestion);
+    if (entry.signature !== signature) {
+      entry.ingestion = ingestion;
+      entry.signature = signature;
+      fillCard(entry);
+    }
+    refreshCardTime(entry);
+    byStage.get(stageOf(ingestion.status)).push(entry);
+  }
+  for (const [id, entry] of cardsById) {
+    if (!seen.has(id)) {
+      entry.el.remove();
+      cardsById.delete(id);
+    }
+  }
+
+  for (const [key, entries] of byStage) {
+    const station = stageElement(key);
+    const list = station.querySelector("[data-chips]");
+    const isFinished = key === "completed" || key === "failed";
+    // Waiting stages show the oldest first, as a queue; finished stages show the newest.
+    const direction = isFinished ? -1 : 1;
+    entries.sort((a, b) => direction * (Date.parse(a.ingestion.created_at) - Date.parse(b.ingestion.created_at)));
+    const limit = CARDS_PER_STAGE[key];
+    entries.forEach((entry, index) => {
+      entry.el.hidden = index >= limit;
+      if (list.children[index] !== entry.el) list.insertBefore(entry.el, list.children[index] || null);
+      if (entry.stage !== null && entry.stage !== key) flashStage(station);
+      entry.stage = key;
+    });
+
+    let more = list.querySelector(".chips-more");
+    if (!more) more = element("li", "chips-more");
+    more.hidden = entries.length <= limit;
+    more.textContent = `+${entries.length - limit} more`;
+    if (list.lastElementChild !== more) list.append(more);
+
+    stageCounts.set(key, entries.length);
+    station.querySelector('[data-field="count"]').textContent = String(entries.length);
+  }
+
+  animateCards(before);
+  refreshBoardState();
+}
+
+function flashStage(station) {
+  if (prefersReducedMotion.matches) return;
+  station.classList.remove("arrived");
+  // Reading the layout restarts the animation when a stage is hit twice in a row.
+  void station.offsetWidth;
+  station.classList.add("arrived");
+  setTimeout(() => station.classList.remove("arrived"), ARRIVE_MS);
+}
+
+function queueDepth(name) {
+  return queueCounts.get(name) || { ready: 0, unacked: 0, consumers: 0 };
+}
+
+function refreshBoardState() {
+  const isBusy = (key) => {
+    const depth = queueDepth(stageElement(key).dataset.queue);
+    return (stageCounts.get(key) || 0) > 0 || depth.ready > 0 || depth.unacked > 0;
+  };
+  for (const key of WORKING_STAGES) stageElement(key).dataset.state = isBusy(key) ? "busy" : "idle";
+  stageElement("completed").dataset.state = (stageCounts.get("completed") || 0) > 0 ? "done" : "idle";
+  stageElement("failed").dataset.state = (stageCounts.get("failed") || 0) > 0 ? "failed" : "idle";
+  stageElement("retry").dataset.state = isBusy("retry") ? "busy" : "idle";
+  stageElement("dlq").dataset.state = isBusy("dlq") ? "failed" : "idle";
+
+  // A connector moves when work waits before it or is being done after it.
+  WORKING_STAGES.forEach((key, index) => {
+    const next = WORKING_STAGES[index + 1];
+    const isFlowing = isBusy(key) || (next !== undefined && isBusy(next));
+    document.querySelector(`.link[data-after="${key}"]`).dataset.flow = isFlowing ? "on" : "off";
+  });
 }
 
 function updateQueue(name, ready, unacked, consumers) {
-  const node = document.querySelector(`.queue-node[data-queue="${name}"]`);
+  const node = document.querySelector(`[data-queue="${name}"]`);
   if (!node) return;
-  const key = `${ready}/${unacked}/${consumers}`;
-  if (lastQueueCounts.get(name) === key) return;
-  const isFirstDraw = !lastQueueCounts.has(name);
-  lastQueueCounts.set(name, key);
+  const previous = queueCounts.get(name);
+  if (previous && previous.ready === ready && previous.unacked === unacked && previous.consumers === consumers) return;
+  queueCounts.set(name, { ready, unacked, consumers });
 
   const set = (field, value) => {
     const target = node.querySelector(`[data-field="${field}"]`);
@@ -335,18 +527,40 @@ function updateQueue(name, ready, unacked, consumers) {
   set("unacked", unacked);
   set("consumers", consumers);
   set("unpublished", ready);
+  // The retry and dead-letter stages have no ingestion cards, so their big number is the queue.
+  if (name === "ingestion.retry" || name === "ingestion.dlq") set("count", ready + unacked);
 
-  const state = queueState(name, ready, unacked);
-  const view = QUEUE_STATE_VIEWS[state];
-  node.dataset.state = state;
-  const marker = node.querySelector('[data-field="icon"]');
-  marker.className = `status-icon tone-${view.tone}`;
-  marker.replaceChildren(icon(view.icon));
-
-  if (!isFirstDraw) {
-    node.classList.add("changed");
-    setTimeout(() => node.classList.remove("changed"), 600);
+  if (previous) {
+    const stats = node.querySelector(".station-stats");
+    stats.classList.add("changed");
+    setTimeout(() => stats.classList.remove("changed"), 600);
   }
+}
+
+function setUpPresent() {
+  const root = document.documentElement;
+  const button = document.getElementById("present-toggle");
+  const setPresenting = (isOn) => {
+    root.toggleAttribute("data-present", isOn);
+    button.setAttribute("aria-pressed", String(isOn));
+  };
+  button.addEventListener("click", async () => {
+    const isOn = !root.hasAttribute("data-present");
+    setPresenting(isOn);
+    try {
+      if (isOn) await root.requestFullscreen();
+      else if (document.fullscreenElement) await document.exitFullscreen();
+    } catch {
+      // The browser may refuse fullscreen; the larger layout still applies.
+    }
+  });
+  // Leaving fullscreen with Esc ends presenting too; without fullscreen Esc does it alone.
+  document.addEventListener("fullscreenchange", () => {
+    if (!document.fullscreenElement) setPresenting(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && root.hasAttribute("data-present")) setPresenting(false);
+  });
 }
 
 async function refreshIngestions() {
@@ -362,6 +576,7 @@ async function refreshQueues() {
     for (const queue of body.queues) {
       updateQueue(queue.queue, queue.messages_ready, queue.messages_unacked, queue.consumers);
     }
+    refreshBoardState();
     brokerError.hidden = true;
   } catch (error) {
     showError(brokerError, error);
@@ -456,14 +671,66 @@ async function openBlocks(ingestion) {
   }
 }
 
-const blocksDialog = document.getElementById("blocks-dialog");
-document.getElementById("blocks-close").addEventListener("click", () => blocksDialog.close());
-// A click on the backdrop lands on the dialog element itself, not on its content.
-blocksDialog.addEventListener("click", (event) => {
-  if (event.target === blocksDialog) blocksDialog.close();
-});
+function chunkLocation(chunk) {
+  const pages = chunk.page_start === null ? "" : (
+    chunk.page_start === chunk.page_end ? `Page ${chunk.page_start}` : `Pages ${chunk.page_start}–${chunk.page_end}`
+  );
+  const headings = chunk.heading_path.join(" › ");
+  return [pages, headings].filter(Boolean).join(" · ") || "Before the first heading";
+}
+
+async function openChunks(ingestion) {
+  if (ingestion.status !== "completed") return;
+  const dialog = document.getElementById("chunks-dialog");
+  const list = document.getElementById("chunks-list");
+  const summary = document.getElementById("chunks-summary");
+  document.getElementById("chunks-title").textContent = ingestion.source_file_name;
+  document.getElementById("chunks-icon").replaceChildren(icon(STATUS_VIEWS.completed.icon));
+  summary.textContent = "Loading…";
+  list.replaceChildren();
+  dialog.showModal();
+  try {
+    const body = await getJson(
+      `/knowledge-items/${encodeURIComponent(ingestion.item_id)}/versions/` +
+      `${encodeURIComponent(ingestion.version_tag)}/chunks?limit=${MAX_CHUNKS}`,
+    );
+    const retrieval = body.is_retrievable
+      ? "retrievable"
+      : `not retrievable, ${body.active_version_tag} is the active version`;
+    const shown = body.chunks.length < body.chunk_count ? `first ${body.chunks.length} of ` : "";
+    summary.textContent = `${body.version_tag} · ${shown}${body.chunk_count} chunks · ${retrieval}`;
+    list.replaceChildren(...body.chunks.map((chunk) => {
+      const item = element("li", "block paragraph");
+      const head = element("div", "block-head");
+      head.append(
+        element("span", "where", chunkLocation(chunk)),
+        element("span", "pill", `${chunk.token_count} tokens`),
+        element("span", "pill", `blocks ${chunk.first_block_order}–${chunk.last_block_order}`),
+      );
+      // Documents may be in Persian, so each chunk picks its own text direction.
+      const text = element("pre", "block-text", chunk.text);
+      text.dir = "auto";
+      const chunkBody = element("div", "block-body");
+      chunkBody.append(head, text);
+      item.append(element("span", "block-number", String(chunk.order)), chunkBody);
+      return item;
+    }));
+  } catch (error) {
+    summary.textContent = error.code ? `${error.code}: ${error.message}` : error.message;
+  }
+}
+
+for (const name of ["blocks", "chunks"]) {
+  const dialog = document.getElementById(`${name}-dialog`);
+  document.getElementById(`${name}-close`).addEventListener("click", () => dialog.close());
+  // A click on the backdrop lands on the dialog element itself, not on its content.
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+}
 
 loadNodes();
 setUpUpload();
 setUpFilters();
+setUpPresent();
 poll();

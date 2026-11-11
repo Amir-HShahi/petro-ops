@@ -122,7 +122,7 @@ Log lines are JSON on stderr.
 
 Open <http://127.0.0.1:8000/pipeline> while the API runs. The page needs no internet. It shows:
 
-- a "Submit a file" button that opens the form to submit a file for a registered Node;
+- a "Submit files" button that opens the form to submit one or more files for a registered Node (each file becomes its own ingestion);
 - the outbox and the five queues (`ingestion`, `ingestion.vision`, `ingestion.chunking`, `ingestion.retry`, `ingestion.dlq`) as a pipeline graph. Each node has an icon (spinning while a worker holds a message, a clock while messages wait, a red cross when the dead-letter queue is not empty) and the counts of messages waiting, messages a worker holds and has not acked, and consumers;
 - the 20 most recent ingestions as rows, newest first, with a status icon, a track of the four stages (Queued, Extracting, Reading pages, Chunking), the time since the last update and the duration, plus the chunk count and duplicate flag count. The buttons above the list filter by All, In progress, Completed and Failed. Click a completed row to see its duplicate flags and its blocks, with the page or heading path, table or text, and the review flag.
 
