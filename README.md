@@ -57,6 +57,18 @@ Postgres and RabbitMQ run in Docker: `docker compose -f docker/docker-compose.ym
 
 Each command prints its result to stdout as JSON. Errors go to stderr as [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details with a code from `docs/errors.md`, and log lines go to stderr as JSON. Set `LOG_LEVEL=debug` to see every step. Add `--help` to any command for all its options.
 
+## Organizational hierarchy
+
+The Layers, the Nodes in them and what each Layer requires of the packages it receives (spec §6, §10.1). The five Layers are created by the migrations; the case-study Nodes come from `fixtures/registry/nodes.csv`.
+
+```bash
+uv run organization import-nodes
+uv run organization register-node sp12_ndt_team --name "SP-12 NDT Team" --layer 3 --parent platform_sp12 --activity-area "non-destructive testing" --reporting-rule weekly
+uv run organization define-transfer-rule 1 --detail-level managerial --required-topic "key risks" --output-format markdown --max-package-length-tokens 1500 --source-reference-level document
+```
+
+`docker/organization-demo.sh` runs the whole flow step by step: it starts Postgres, creates the tables, imports the chart, registers a Node, shows the hierarchy rules refusing four bad Nodes, defines the transfer rules of Layers 0 to 3 and prints the chart. Add `--reset` to start from an empty chart.
+
 ## Checks
 
 ```bash
