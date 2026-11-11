@@ -60,6 +60,24 @@ Add a row in the same PR that adds the code.
 | Code | Category | Meaning | How to fix |
 |---|---|---|---|
 | `ORGANIZATION_INVALID_NODE_IDENTIFIER` | Domain | A Node id is empty or starts or ends with a space. | Send the Node id exactly as it is in the registry. |
+| `ORGANIZATION_INVALID_LAYER_INDEX` | Domain | A Layer index is not a whole number from 0 to 4. | Use a Layer from 0 (strategic) to 4 (knowledge sources). |
+| `ORGANIZATION_INVALID_LAYER_DETAIL_LEVEL` | Domain | Layer 4 was given a detail level, or Layers 0 to 3 were given none. | Leave the detail level empty for Layer 4 and set one for every other Layer. |
+| `ORGANIZATION_PARENT_NODE_REQUIRED` | Domain | A Node below Layer 0 has no parent Node. | Give the parent Node it reports to. |
+| `ORGANIZATION_TOP_LAYER_NODE_HAS_PARENT` | Domain | A Layer 0 Node was given a parent, but Layer 0 is the top. | Remove the parent, or put the Node in a lower Layer. |
+| `ORGANIZATION_PARENT_NOT_IN_HIGHER_LAYER` | Domain | A parent Node is in the same Layer as its child or a lower one. | Pick a parent in a higher Layer (a lower number). |
+| `ORGANIZATION_PARENT_STRUCTURE_NOT_TRACKED` | Domain | A Node was placed under a parent whose internal structure is not tracked, so it cannot have children. | Turn on tracking for the parent, or pick another parent. |
+| `ORGANIZATION_NODE_NOT_FOUND` | Not found | No Node has the requested id, for example the parent given for a new Node. | Check the id, or register that Node first. |
+| `ORGANIZATION_LAYER_NOT_FOUND` | Not found | A Layer is missing from the database, so the five Layers were not loaded. | Run `uv run alembic upgrade head`. |
+| `ORGANIZATION_NODE_ALREADY_REGISTERED` | Domain | A Node with the same id is already registered. | Pick another id. |
+| `ORGANIZATION_TOP_LAYER_NODE_ALREADY_REGISTERED` | Domain | A second Node was sent to Layer 0, which holds one Node at the top. | Register the Node in a lower Layer under an existing Node. |
+| `ORGANIZATION_STORAGE_FAILED` | Infrastructure | The local database of Nodes and Layers cannot be read or written, or a new Node's id is already taken. | Check that Postgres is running and the migrations have run, then try again. |
+| `ORGANIZATION_NODE_REGISTRY_FILE_NOT_READABLE` | Not found | The Node registry CSV to import does not exist or cannot be read. | Check the path given to `organization import-nodes --file`, or `NODE_REGISTRY_PATH`. |
+| `ORGANIZATION_NODE_REGISTRY_FILE_INVALID` | Domain | A row of the Node registry CSV is missing a column or has a value it cannot hold. `details` names the row and column. | Fix that row as described in `fixtures/registry/README.md`. |
+| `ORGANIZATION_LAYER_RECEIVES_NO_PACKAGE` | Domain | Transfer rules were defined for Layer 4, which only provides knowledge. | Define transfer rules for Layers 0 to 3 only. |
+| `ORGANIZATION_TRANSFER_TOPIC_REQUIRED_AND_EXCLUDED` | Domain | A topic is both required and excluded in a Layer's transfer rules. `details.topics` lists them. | Keep each topic in one list only. |
+| `ORGANIZATION_TRANSFER_RULE_FIELD_EMPTY` | Domain | A topic, the output format or the source reference level of a transfer rule is blank. `details.field` names it. | Fill in that field. |
+| `ORGANIZATION_INVALID_PACKAGE_LENGTH` | Domain | The maximum TransferPackage length is not a whole number of tokens above 0. | Give a positive number of tokens. |
+| `EVALUATION_INVALID_JUDGE_THRESHOLD` | Domain | A judge threshold is not a whole number of points from 1 to 20. | Give a score from 1 to 20, such as 18. |
 | `KNOWLEDGE_EMPTY_FILE` | Domain | A submitted file has no content. | Submit the file again with its content. |
 | `KNOWLEDGE_UNSUPPORTED_FORMAT` | Domain | A submitted file is not DOC, DOCX or PDF. The format is read from the file content, not its name. | Convert the file to DOC, DOCX or PDF. |
 | `KNOWLEDGE_INVALID_VERSION_HISTORY` | Unexpected | A KnowledgeItem was built with versions that break the version rules. This is a bug or corrupted storage. | Report it with the `request_id`. |
