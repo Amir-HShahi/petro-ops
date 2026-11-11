@@ -44,7 +44,8 @@ class Settings(BaseSettings):
             are accepted (ADR 0006).
         api_port: The TCP port the ingestion API listens on.
         max_file_mb: The largest file that can be submitted, in megabytes.
-        node_registry_path: CSV file with the registered Nodes (spec §6.1).
+        node_registry_path: CSV file of Nodes that `organization import-nodes`
+            registers by default (spec §6.1).
         log_level: Lowest log level that is written.
         min_page_text_chars: A PDF page with fewer non-space characters than this
             has no usable text layer and is left for the LVM.

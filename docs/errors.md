@@ -88,7 +88,7 @@ Add a row in the same PR that adds the code.
 | `KNOWLEDGE_SOURCE_FILE_NOT_READABLE` | Not found | The file named in the command does not exist or cannot be read. | Check the path and the file's permissions. |
 | `KNOWLEDGE_STORAGE_FAILED` | Infrastructure | The local knowledge database cannot be read or written, or a new item's id is already taken. | Check that `DATA_DIR` is writable and has free space, then try again. |
 | `KNOWLEDGE_SOURCE_FILE_STORAGE_FAILED` | Infrastructure | A submitted file cannot be written to the local file store. | Check that `DATA_DIR` is writable and has free space, then try again. |
-| `KNOWLEDGE_NODE_REGISTRY_UNAVAILABLE` | Infrastructure | The Node registry file is missing, has no `node_id` column or lists an invalid Node id. | Check `NODE_REGISTRY_PATH` and the file's content. |
+| `KNOWLEDGE_NODE_REGISTRY_UNAVAILABLE` | Infrastructure | The registered Nodes of Organizational Hierarchy cannot be read from Postgres. | Check that Postgres is running and `DATABASE_URL` points to it. |
 | `KNOWLEDGE_VERSION_NOT_FOUND` | Not found | A KnowledgeItem has no version with the requested tag. | Check the version tag, such as `v1`. |
 | `KNOWLEDGE_VERSION_CHANGE_REASON_MISSING` | Domain | A new version was published without a change reason. Every update must say why it was made (spec §7.6). | Send a short `change_reason`, then publish again. |
 | `KNOWLEDGE_VERSION_UNCHANGED` | Domain | The file published as a new version is byte for byte the item's active version, so nothing changed. | Publish the changed file, or keep the active version. |

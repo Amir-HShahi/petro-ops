@@ -69,14 +69,15 @@ class SourceFileStorageError(InfrastructureError):
 
 
 class NodeRegistryUnavailableError(InfrastructureError):
-    """The Node registry file is missing or does not have the expected columns."""
+    """The registered Nodes of Organizational Hierarchy cannot be read."""
 
     code = "KNOWLEDGE_NODE_REGISTRY_UNAVAILABLE"
 
     def __init__(self) -> None:
         """Create the error."""
         super().__init__(
-            "The Node registry could not be read. Check NODE_REGISTRY_PATH and the file's columns.",
+            "The registered Nodes could not be read. Check that Postgres is running "
+            "and DATABASE_URL points to it.",
         )
 
 

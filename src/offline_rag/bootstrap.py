@@ -38,7 +38,6 @@ from offline_rag.knowledge.application.run_ingestion_step import RunIngestionSte
 from offline_rag.knowledge.application.submit_knowledge_item import SubmitKnowledgeItemHandler
 from offline_rag.knowledge.domain.duplicate_detection import DuplicateDetector
 from offline_rag.knowledge.infrastructure.approximate_tokenizer import ApproximateTokenizer
-from offline_rag.knowledge.infrastructure.csv_node_directory import CsvNodeDirectory
 from offline_rag.knowledge.infrastructure.docling_document_parser import DoclingDocumentParser
 from offline_rag.knowledge.infrastructure.in_process_event_publisher import (
     InProcessEventPublisher,
@@ -51,6 +50,9 @@ from offline_rag.knowledge.infrastructure.model_registry import load_registered_
 from offline_rag.knowledge.infrastructure.ollama_client import OllamaClient
 from offline_rag.knowledge.infrastructure.ollama_lvm import OllamaLvm
 from offline_rag.knowledge.infrastructure.ollama_table_ocr import OllamaTableOcr
+from offline_rag.knowledge.infrastructure.organization_node_directory import (
+    OrganizationNodeDirectory,
+)
 from offline_rag.knowledge.infrastructure.pdfium_page_renderer import PdfiumPageRenderer
 from offline_rag.knowledge.infrastructure.postgres_database import PostgresDatabase
 from offline_rag.knowledge.infrastructure.postgres_duplicate_flag_repository import (
@@ -84,6 +86,7 @@ from offline_rag.knowledge.infrastructure.rabbitmq_management_queue_monitor impo
 from offline_rag.knowledge.infrastructure.system_clock import SystemClock
 from offline_rag.knowledge.infrastructure.uuid_id_generator import UuidIdGenerator
 from offline_rag.organization.application.define_transfer_rule import DefineTransferRuleHandler
+from offline_rag.organization.application.node_queries import NodeQueries
 from offline_rag.organization.application.register_node import RegisterNodeHandler
 from offline_rag.organization.infrastructure.postgres_database import (
     PostgresDatabase as OrganizationDatabase,
@@ -97,6 +100,20 @@ from offline_rag.organization.infrastructure.postgres_node_repository import (
 from offline_rag.settings import Settings
 
 SOURCE_FILES_DIR_NAME = "source_files"
+
+
+@dataclass(frozen=True, kw_only=True)
+class OrganizationWiring:
+    """The Organizational Hierarchy use cases and queries, and the connection they share."""
+
+    register_node_handler: RegisterNodeHandler
+    define_transfer_rule_handler: DefineTransferRuleHandler
+    node_queries: NodeQueries
+    database: OrganizationDatabase
+
+    def close(self) -> None:
+        """Close the database pool."""
+        self.database.close()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -117,24 +134,13 @@ class KnowledgeWiring:
     ingestion_repository: PostgresKnowledgeIngestionRepository
     database: PostgresDatabase
     message_publisher: RabbitMqIngestionMessagePublisher
+    organization: OrganizationWiring
 
     def close(self) -> None:
-        """Close the database pool and the broker connection."""
+        """Close the database pools and the broker connection."""
         self.message_publisher.close()
         self.database.close()
-
-
-@dataclass(frozen=True, kw_only=True)
-class OrganizationWiring:
-    """The Organizational Hierarchy use cases and the connection they share."""
-
-    register_node_handler: RegisterNodeHandler
-    define_transfer_rule_handler: DefineTransferRuleHandler
-    database: OrganizationDatabase
-
-    def close(self) -> None:
-        """Close the database pool."""
-        self.database.close()
+        self.organization.close()
 
 
 def configure_logging(settings: Settings) -> None:
@@ -243,7 +249,9 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
         words_per_shingle=settings.duplicate_shingle_words,
     )
 
-    node_directory = CsvNodeDirectory(settings.node_registry_path)
+    # Submitting checks the owner Node against Organizational Hierarchy (spec §6.1).
+    organization = build_organization(settings)
+    node_directory = OrganizationNodeDirectory(organization.node_queries)
     submit_handler = SubmitKnowledgeItemHandler(
         ingestion_repository=ingestion_repository,
         node_directory=node_directory,
@@ -317,6 +325,7 @@ def build_knowledge(settings: Settings) -> KnowledgeWiring:
         ingestion_repository=ingestion_repository,
         database=database,
         message_publisher=message_publisher,
+        organization=organization,
     )
 
 
@@ -327,12 +336,13 @@ def build_organization(settings: Settings) -> OrganizationWiring:
         pool_size=settings.database_pool_size,
         connect_timeout_s=settings.database_connect_timeout_s,
     )
+    node_repository = PostgresNodeRepository(database)
     layer_repository = PostgresLayerRepository(database)
     clock = SystemClock()
     event_publisher = InProcessEventPublisher()
     return OrganizationWiring(
         register_node_handler=RegisterNodeHandler(
-            node_repository=PostgresNodeRepository(database),
+            node_repository=node_repository,
             layer_repository=layer_repository,
             clock=clock,
             event_publisher=event_publisher,
@@ -342,6 +352,7 @@ def build_organization(settings: Settings) -> OrganizationWiring:
             clock=clock,
             event_publisher=event_publisher,
         ),
+        node_queries=NodeQueries(node_repository=node_repository),
         database=database,
     )
 
