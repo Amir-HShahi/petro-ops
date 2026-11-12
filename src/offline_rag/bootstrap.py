@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import pika
 import structlog
+from fastapi import APIRouter
 
 from offline_rag.knowledge.application.chunk_knowledge_content import (
     ChunkingSizes,
@@ -86,6 +87,7 @@ from offline_rag.knowledge.infrastructure.rabbitmq_management_queue_monitor impo
 from offline_rag.knowledge.infrastructure.system_clock import SystemClock
 from offline_rag.knowledge.infrastructure.uuid_id_generator import UuidIdGenerator
 from offline_rag.organization.application.define_transfer_rule import DefineTransferRuleHandler
+from offline_rag.organization.application.hierarchy_queries import HierarchyQueries
 from offline_rag.organization.application.node_queries import NodeQueries
 from offline_rag.organization.application.register_node import RegisterNodeHandler
 from offline_rag.organization.infrastructure.postgres_database import (
@@ -97,6 +99,7 @@ from offline_rag.organization.infrastructure.postgres_layer_repository import (
 from offline_rag.organization.infrastructure.postgres_node_repository import (
     PostgresNodeRepository,
 )
+from offline_rag.organization.interface.api import create_organization_router
 from offline_rag.settings import Settings
 
 SOURCE_FILES_DIR_NAME = "source_files"
@@ -109,6 +112,7 @@ class OrganizationWiring:
     register_node_handler: RegisterNodeHandler
     define_transfer_rule_handler: DefineTransferRuleHandler
     node_queries: NodeQueries
+    hierarchy_queries: HierarchyQueries
     database: OrganizationDatabase
 
     def close(self) -> None:
@@ -353,7 +357,23 @@ def build_organization(settings: Settings) -> OrganizationWiring:
             event_publisher=event_publisher,
         ),
         node_queries=NodeQueries(node_repository=node_repository),
+        hierarchy_queries=HierarchyQueries(
+            layer_repository=layer_repository, node_repository=node_repository
+        ),
         database=database,
+    )
+
+
+def build_organization_router(organization: OrganizationWiring) -> APIRouter:
+    """Return the Organizational Hierarchy routes to mount on the API (ADR 0011).
+
+    The routes are built here because Knowledge Management may not import the
+    interface of another context.
+    """
+    return create_organization_router(
+        register_node_handler=organization.register_node_handler,
+        define_transfer_rule_handler=organization.define_transfer_rule_handler,
+        queries=organization.hierarchy_queries,
     )
 
 

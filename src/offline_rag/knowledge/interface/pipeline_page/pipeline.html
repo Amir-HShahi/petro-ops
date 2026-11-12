@@ -102,6 +102,11 @@
         <span class="crumb-separator" aria-hidden="true">/</span>
         <span class="crumb">Knowledge</span>
       </div>
+      <nav class="view-tabs" role="tablist" aria-label="Pages">
+        <button type="button" role="tab" data-view-tab="pipeline" aria-selected="true">Pipeline</button>
+        <button type="button" role="tab" data-view-tab="knowledge" aria-selected="false">Versions &amp; duplicates</button>
+        <button type="button" role="tab" data-view-tab="hierarchy" aria-selected="false">Hierarchy</button>
+      </nav>
       <div class="site-actions">
         <div class="live" id="live" data-state="connecting">
           <span class="dot" aria-hidden="true"></span>
@@ -125,7 +130,14 @@
     </div>
   </header>
 
-  <main class="page">
+  <div class="flash page-flash" id="flash" role="status" hidden>
+    <span id="flash-text"></span>
+    <button type="button" class="icon-button" id="flash-close" aria-label="Dismiss">
+      <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-close"></use></svg>
+    </button>
+  </div>
+
+  <main class="page" data-view="pipeline">
     <div class="page-head">
       <div>
         <h1>Ingestion pipeline</h1>
@@ -179,12 +191,6 @@
       </div>
     </div>
 
-    <div class="flash" id="flash" role="status" hidden>
-      <span id="flash-text"></span>
-      <button type="button" class="icon-button" id="flash-close" aria-label="Dismiss">
-        <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-close"></use></svg>
-      </button>
-    </div>
 
     <section class="board" aria-label="Where each document is in the pipeline">
       <div class="track">
@@ -319,6 +325,97 @@
     </section>
   </main>
 
+  <main class="page" data-view="knowledge" hidden>
+    <div class="page-head">
+      <div>
+        <h1>Versions &amp; duplicates</h1>
+        <p class="summary" aria-live="off">
+          <span class="summary-item"><b data-know-count="items">0</b> items</span>
+          <span class="summary-item tone-active"><b data-know-count="versions">0</b> versions</span>
+          <span class="summary-item tone-fail"><b data-know-count="flags">0</b> duplicate flags</span>
+        </p>
+      </div>
+    </div>
+
+    <section class="box" aria-labelledby="kinds-title">
+      <div class="box-head"><h2 id="kinds-title">What the duplicate checks look for</h2></div>
+      <dl class="kinds">
+        <div class="kind" data-kind="exact"><dt>Exact</dt><dd>The two files are byte for byte the same. Found when the file is submitted.</dd></div>
+        <div class="kind" data-kind="near"><dt>Near</dt><dd>The files differ but their normalized text is the same. Found after chunking.</dd></div>
+        <div class="kind" data-kind="metadata_variant"><dt>Metadata variant</dt><dd>Same normalized text, different metadata recorded with it.</dd></div>
+        <div class="kind" data-kind="overlap"><dt>Overlap</dt><dd>Enough chunks repeat text of another item. A flag is a finding: both items are kept.</dd></div>
+      </dl>
+    </section>
+
+    <div class="split">
+      <section class="box" aria-labelledby="items-title">
+        <div class="box-head"><h2 id="items-title">Knowledge items</h2><span class="hint">From the latest 100 ingestions</span></div>
+        <ul class="item-list" id="item-list"></ul>
+        <p class="empty" id="item-list-empty">No items yet. Submit files on the Pipeline page.</p>
+        <p class="message error box-message" id="item-list-error" hidden></p>
+      </section>
+
+      <section class="box" id="item-detail" aria-labelledby="item-title" hidden>
+        <div class="box-head">
+          <div class="dialog-title">
+            <h2 id="item-title">Item</h2>
+            <p class="hint" id="item-summary"></p>
+          </div>
+        </div>
+        <ol class="versions" id="version-list"></ol>
+        <form class="version-form" id="version-form">
+          <h3>Publish a new version</h3>
+          <label><span>File <span class="hint">DOC, DOCX or PDF</span></span>
+            <input type="file" name="file" id="version-file" required accept=".doc,.docx,.pdf">
+          </label>
+          <label>Why did the item change?
+            <input type="text" name="change_reason" id="version-reason" required placeholder="Adds the March readings">
+          </label>
+          <label><span>What changed <span class="hint">optional</span></span>
+            <input type="text" name="diff_summary" id="version-diff">
+          </label>
+          <button type="submit" class="btn btn-primary" id="version-button">Publish version</button>
+          <p class="message" id="version-message" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+    </div>
+  </main>
+
+  <main class="page" data-view="hierarchy" hidden>
+    <div class="page-head">
+      <div>
+        <h1>Organizational hierarchy</h1>
+        <p class="summary" aria-live="off">
+          <span class="summary-item"><b data-org-count="layers">0</b> layers</span>
+          <span class="summary-item tone-active"><b data-org-count="nodes">0</b> nodes</span>
+          <span class="summary-item tone-done"><b data-org-count="rules">0</b> layers with transfer rules</span>
+        </p>
+      </div>
+      <div class="head-actions">
+        <button type="button" class="btn btn-primary" id="node-open">Register Node</button>
+      </div>
+    </div>
+
+    <section class="box" aria-labelledby="layers-title">
+      <div class="box-head">
+        <h2 id="layers-title">Layer registry and transfer requirements</h2>
+        <span class="hint">Each Layer says how detailed the knowledge it receives from the Layer below must be</span>
+      </div>
+      <ol class="layers" id="layer-list"></ol>
+      <p class="message error box-message" id="layers-error" hidden></p>
+    </section>
+
+    <section class="box" aria-labelledby="tree-title">
+      <div class="box-head">
+        <h2 id="tree-title">Nodes</h2>
+        <span class="hint">Parent and child, from Layer 0 down. A dashed Node is a terminal Node: its inside is outside the system boundary.</span>
+      </div>
+      <ul class="tree" id="node-tree"></ul>
+      <p class="empty" id="node-tree-empty">No Nodes yet. Register the Layer 0 Node first.</p>
+      <p class="message error box-message" id="nodes-error" hidden></p>
+    </section>
+  </main>
+
   <dialog id="blocks-dialog" aria-labelledby="blocks-title">
     <div class="dialog-head">
       <span class="status-icon tone-success" id="blocks-icon"></span>
@@ -356,6 +453,69 @@
     </section>
   </dialog>
 
+  <dialog id="node-dialog" aria-labelledby="node-title">
+    <div class="dialog-head">
+      <div class="dialog-title">
+        <h2 id="node-title">Register Node</h2>
+        <p class="hint">A Node belongs to one Layer and reports to a parent in a higher Layer.</p>
+      </div>
+      <button type="button" class="icon-button" id="node-close" aria-label="Close">
+        <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-close"></use></svg>
+      </button>
+    </div>
+    <form class="dialog-form" id="node-form">
+      <label>Node id <input type="text" name="node_id" required placeholder="sp12_inspection_team"></label>
+      <label>Name <input type="text" name="name" required placeholder="SP-12 Inspection Team"></label>
+      <label>Layer <select name="layer_index" id="node-layer" required></select></label>
+      <label>Parent Node <select name="parent_node_id" id="node-parent"></select></label>
+      <label>Activity area <input type="text" name="activity_area" required placeholder="offshore inspection"></label>
+      <label>Reporting rule <input type="text" name="reporting_rule" required placeholder="weekly" list="reporting-rules"></label>
+      <datalist id="reporting-rules"><option value="daily"><option value="weekly"><option value="monthly"><option value="on_phase_completion"></datalist>
+      <label>Confidentiality
+        <select name="confidentiality" id="node-confidentiality"></select>
+      </label>
+      <label class="check"><input type="checkbox" name="is_internal_structure_tracked"> <span>Track internal structure <span class="hint">Without it this is a terminal Node and cannot have children.</span></span></label>
+      <button type="submit" class="btn btn-primary" id="node-submit">Register Node</button>
+      <p class="message" id="node-message" role="status" aria-live="polite"></p>
+    </form>
+  </dialog>
+
+  <dialog id="rule-dialog" aria-labelledby="rule-title">
+    <div class="dialog-head">
+      <div class="dialog-title">
+        <h2 id="rule-title">Transfer requirements</h2>
+        <p class="hint" id="rule-summary"></p>
+      </div>
+      <button type="button" class="icon-button" id="rule-close" aria-label="Close">
+        <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-close"></use></svg>
+      </button>
+    </div>
+    <form class="dialog-form" id="rule-form">
+      <label>Detail level received
+        <select name="received_detail_level" id="rule-detail" required></select>
+      </label>
+      <label><span>Required topics <span class="hint">comma separated</span></span>
+        <input type="text" name="required_topics" placeholder="safety, cost, schedule">
+      </label>
+      <label><span>Excluded topics <span class="hint">comma separated</span></span>
+        <input type="text" name="excluded_topics" placeholder="personnel details">
+      </label>
+      <label>Output format <input type="text" name="output_format" required placeholder="markdown"></label>
+      <label><span>Lowest judge score <span class="hint">1 to 20</span></span>
+        <input type="number" name="min_judge_score" min="1" max="20" step="1" value="18" required>
+      </label>
+      <label><span>Longest package <span class="hint">tokens</span></span>
+        <input type="number" name="max_package_length_tokens" min="1" step="1" value="2000" required>
+      </label>
+      <label>Source reference level <input type="text" name="source_reference_level" required placeholder="page" list="reference-levels"></label>
+      <datalist id="reference-levels"><option value="document"><option value="section"><option value="page"><option value="chunk"></datalist>
+      <button type="submit" class="btn btn-primary" id="rule-submit">Save requirements</button>
+      <p class="message" id="rule-message" role="status" aria-live="polite"></p>
+    </form>
+  </dialog>
+
   <script src="/pipeline/assets/pipeline.js"></script>
+  <script src="/pipeline/assets/versions.js"></script>
+  <script src="/pipeline/assets/hierarchy.js"></script>
 </body>
 </html>

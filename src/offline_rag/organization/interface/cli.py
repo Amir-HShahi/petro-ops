@@ -24,10 +24,9 @@ from offline_rag.knowledge.interface.problem_details import (
 )
 from offline_rag.organization.application.commands import DefineTransferRule, RegisterNode
 from offline_rag.organization.application.errors import NodeAlreadyRegisteredError
-from offline_rag.organization.domain.layer import Layer
-from offline_rag.organization.domain.node import Node
 from offline_rag.organization.domain.transfer_detail_level import TransferDetailLevel
 from offline_rag.organization.interface.node_registry_file import read_node_registry
+from offline_rag.organization.interface.response_bodies import layer_body, node_body
 from offline_rag.settings import Settings
 from offline_rag.shared_kernel.confidentiality_level import ConfidentialityLevel
 from offline_rag.shared_kernel.errors import ProjectError
@@ -140,42 +139,6 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
 def run() -> None:
     """Run the `organization` console script."""
     sys.exit(main())
-
-
-def node_body(node: Node) -> dict[str, Any]:
-    """Return the JSON body that describes a Node."""
-    return {
-        "node_id": node.node_id.value,
-        "name": node.name,
-        "layer_index": node.layer_index.value,
-        "parent_node_id": node.parent_node_id.value if node.parent_node_id else None,
-        "activity_area": node.activity_area,
-        "reporting_rule": node.reporting_rule,
-        "confidentiality": node.confidentiality.value,
-        "is_internal_structure_tracked": node.is_internal_structure_tracked,
-    }
-
-
-def layer_body(layer: Layer) -> dict[str, Any]:
-    """Return the JSON body that describes a Layer and its transfer rules."""
-    rule = layer.transfer_rule
-    detail_level = layer.received_detail_level
-    return {
-        "layer_index": layer.layer_index.value,
-        "name": layer.name,
-        "role": layer.role,
-        "received_detail_level": detail_level.value if detail_level else None,
-        "transfer_rule": None
-        if rule is None
-        else {
-            "required_topics": list(rule.required_topics),
-            "excluded_topics": list(rule.excluded_topics),
-            "output_format": rule.output_format,
-            "min_judge_score": rule.min_judge_score.points,
-            "max_package_length_tokens": rule.max_package_length_tokens,
-            "source_reference_level": rule.source_reference_level,
-        },
-    }
 
 
 def _register_node(

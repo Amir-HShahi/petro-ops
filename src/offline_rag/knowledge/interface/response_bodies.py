@@ -5,6 +5,7 @@ from typing import Any
 from offline_rag.knowledge.application.ingestion_queueing import IngestionReceipt
 from offline_rag.knowledge.application.knowledge_ingestion_queries import (
     IngestionStatusView,
+    KnowledgeItemView,
     VersionChunks,
 )
 from offline_rag.knowledge.application.ports import IngestionQueueDepth, KnowledgeIngestionSummary
@@ -62,6 +63,40 @@ def duplicate_flag_body(flag: DuplicateFlag) -> dict[str, Any]:
         "existing_version_tag": flag.existing_version_tag.value,
         "score": round(flag.score, 4),
         "is_ambiguous": flag.is_ambiguous,
+    }
+
+
+def item_body(view: KnowledgeItemView) -> dict[str, Any]:
+    """Return the body for an item with its version history, oldest version first."""
+    item = view.item
+    return {
+        "item_id": item.item_id,
+        "owner_node_id": item.owner_node_id.value,
+        "confidentiality": item.scope.confidentiality.value,
+        "usage_scope": item.scope.usage_scope,
+        "active_version_tag": item.active_version.version_tag.value,
+        "versions": [
+            {
+                "version_tag": entry.version.version_tag.value,
+                "sequence_number": entry.version.sequence_number,
+                "previous_version_tag": (
+                    entry.version.previous_version_tag.value
+                    if entry.version.previous_version_tag
+                    else None
+                ),
+                "source_file_name": entry.version.source_file_name,
+                "document_format": entry.version.document_format.value,
+                "content_hash": entry.version.content_hash,
+                "change_reason": entry.version.change_reason,
+                "diff_summary": entry.version.diff_summary,
+                "created_at": entry.version.created_at.isoformat(),
+                "is_active": entry.is_active,
+                "is_retrievable": entry.is_active and entry.chunk_count > 0,
+                "chunk_count": entry.chunk_count,
+                "duplicate_flags": [duplicate_flag_body(flag) for flag in entry.duplicate_flags],
+            }
+            for entry in view.versions
+        ],
     }
 
 
