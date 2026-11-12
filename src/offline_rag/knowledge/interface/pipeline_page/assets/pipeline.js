@@ -245,6 +245,7 @@ function fillRow(entry) {
   if (isCompleted) title.type = "button";
   const headline = element("div", "ingestion-headline");
   headline.append(title, element("span", "pill", ingestion.document_format.toUpperCase()));
+  
   if (isCompleted) {
     headline.append(
       actionButton("Chunks", () => openChunks(ingestion)),
@@ -384,7 +385,6 @@ function fillCard(entry) {
     actions.append(
       actionButton("Chunks", () => openChunks(ingestion)),
       actionButton("Blocks", () => openBlocks(ingestion)),
-      actionButton("Versions", () => showItem(ingestion.item_id)),
     );
     el.append(actions);
   }
@@ -686,19 +686,20 @@ function chunkLocation(chunk) {
   return [pages, headings].filter(Boolean).join(" · ") || "Before the first heading";
 }
 
-async function openChunks(target) {
+async function openChunks(ingestion) {
+  if (ingestion.status !== "completed") return;
   const dialog = document.getElementById("chunks-dialog");
   const list = document.getElementById("chunks-list");
   const summary = document.getElementById("chunks-summary");
-  document.getElementById("chunks-title").textContent = `${target.source_file_name} · ${target.version_tag}`;
+  document.getElementById("chunks-title").textContent = ingestion.source_file_name;
   document.getElementById("chunks-icon").replaceChildren(icon(STATUS_VIEWS.completed.icon));
   summary.textContent = "Loading…";
   list.replaceChildren();
   dialog.showModal();
   try {
     const body = await getJson(
-      `/knowledge-items/${encodeURIComponent(target.item_id)}/versions/` +
-      `${encodeURIComponent(target.version_tag)}/chunks?limit=${MAX_CHUNKS}`,
+      `/knowledge-items/${encodeURIComponent(ingestion.item_id)}/versions/` +
+      `${encodeURIComponent(ingestion.version_tag)}/chunks?limit=${MAX_CHUNKS}`,
     );
     const retrieval = body.is_retrievable
       ? "retrievable"
@@ -735,28 +736,8 @@ for (const name of ["blocks", "chunks"]) {
   });
 }
 
-const VIEWS = ["pipeline", "knowledge", "hierarchy"];
-
-function showView(name) {
-  const view = VIEWS.includes(name) ? name : "pipeline";
-  for (const page of document.querySelectorAll("[data-view]")) page.hidden = page.dataset.view !== view;
-  for (const tab of document.querySelectorAll("[data-view-tab]")) {
-    tab.setAttribute("aria-selected", String(tab.dataset.viewTab === view));
-  }
-  document.dispatchEvent(new CustomEvent("viewchange", { detail: view }));
-}
-
-function setUpViews() {
-  for (const tab of document.querySelectorAll("[data-view-tab]")) {
-    tab.addEventListener("click", () => { location.hash = tab.dataset.viewTab; });
-  }
-  window.addEventListener("hashchange", () => showView(location.hash.slice(1)));
-  showView(location.hash.slice(1));
-}
-
 loadNodes();
 setUpUpload();
 setUpFilters();
 setUpPresent();
-setUpViews();
 poll();

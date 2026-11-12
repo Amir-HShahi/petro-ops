@@ -453,67 +453,6 @@
     </section>
   </dialog>
 
-  <dialog id="node-dialog" aria-labelledby="node-title">
-    <div class="dialog-head">
-      <div class="dialog-title">
-        <h2 id="node-title">Register Node</h2>
-        <p class="hint">A Node belongs to one Layer and reports to a parent in a higher Layer.</p>
-      </div>
-      <button type="button" class="icon-button" id="node-close" aria-label="Close">
-        <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-close"></use></svg>
-      </button>
-    </div>
-    <form class="dialog-form" id="node-form">
-      <label>Node id <input type="text" name="node_id" required placeholder="sp12_inspection_team"></label>
-      <label>Name <input type="text" name="name" required placeholder="SP-12 Inspection Team"></label>
-      <label>Layer <select name="layer_index" id="node-layer" required></select></label>
-      <label>Parent Node <select name="parent_node_id" id="node-parent"></select></label>
-      <label>Activity area <input type="text" name="activity_area" required placeholder="offshore inspection"></label>
-      <label>Reporting rule <input type="text" name="reporting_rule" required placeholder="weekly" list="reporting-rules"></label>
-      <datalist id="reporting-rules"><option value="daily"><option value="weekly"><option value="monthly"><option value="on_phase_completion"></datalist>
-      <label>Confidentiality
-        <select name="confidentiality" id="node-confidentiality"></select>
-      </label>
-      <label class="check"><input type="checkbox" name="is_internal_structure_tracked"> <span>Track internal structure <span class="hint">Without it this is a terminal Node and cannot have children.</span></span></label>
-      <button type="submit" class="btn btn-primary" id="node-submit">Register Node</button>
-      <p class="message" id="node-message" role="status" aria-live="polite"></p>
-    </form>
-  </dialog>
-
-  <dialog id="rule-dialog" aria-labelledby="rule-title">
-    <div class="dialog-head">
-      <div class="dialog-title">
-        <h2 id="rule-title">Transfer requirements</h2>
-        <p class="hint" id="rule-summary"></p>
-      </div>
-      <button type="button" class="icon-button" id="rule-close" aria-label="Close">
-        <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-close"></use></svg>
-      </button>
-    </div>
-    <form class="dialog-form" id="rule-form">
-      <label>Detail level received
-        <select name="received_detail_level" id="rule-detail" required></select>
-      </label>
-      <label><span>Required topics <span class="hint">comma separated</span></span>
-        <input type="text" name="required_topics" placeholder="safety, cost, schedule">
-      </label>
-      <label><span>Excluded topics <span class="hint">comma separated</span></span>
-        <input type="text" name="excluded_topics" placeholder="personnel details">
-      </label>
-      <label>Output format <input type="text" name="output_format" required placeholder="markdown"></label>
-      <label><span>Lowest judge score <span class="hint">1 to 20</span></span>
-        <input type="number" name="min_judge_score" min="1" max="20" step="1" value="18" required>
-      </label>
-      <label><span>Longest package <span class="hint">tokens</span></span>
-        <input type="number" name="max_package_length_tokens" min="1" step="1" value="2000" required>
-      </label>
-      <label>Source reference level <input type="text" name="source_reference_level" required placeholder="page" list="reference-levels"></label>
-      <datalist id="reference-levels"><option value="document"><option value="section"><option value="page"><option value="chunk"></datalist>
-      <button type="submit" class="btn btn-primary" id="rule-submit">Save requirements</button>
-      <p class="message" id="rule-message" role="status" aria-live="polite"></p>
-    </form>
-  </dialog>
-
   <script src="/pipeline/assets/pipeline.js"></script>
   <script src="/pipeline/assets/versions.js"></script>
   <script src="/pipeline/assets/hierarchy.js"></script>
