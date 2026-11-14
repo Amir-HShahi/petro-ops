@@ -28,6 +28,14 @@ class IssueRepository(Protocol):
         """Store a new Issue and its SubIssues."""
         ...
 
+    def save(self, issue: Issue) -> None:
+        """Store the changes of an Issue that is already stored, its new SubIssues included.
+
+        Raises:
+            IssueNotFoundError: No Issue has this id.
+        """
+        ...
+
 
 class NodeDirectory(Protocol):
     """Reads the Node registry of Organizational Hierarchy."""

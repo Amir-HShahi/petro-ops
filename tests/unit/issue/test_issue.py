@@ -11,7 +11,7 @@ from offline_rag.issue.domain.errors import (
     SubIssueIdTakenError,
     SubIssueParentNotFoundError,
 )
-from offline_rag.issue.domain.events import IssueRaised, SimilarIssueFound
+from offline_rag.issue.domain.events import IssueRaised, SimilarIssueFound, SubIssueAdded
 from offline_rag.issue.domain.issue import Issue
 from offline_rag.issue.domain.issue_status import IssueStatus
 from offline_rag.issue.domain.similar_issue import SimilarIssueFlag, SimilarIssueKind
@@ -68,6 +68,7 @@ def _add(issue: Issue, sub_issue_id: str, parent_id: str = ISSUE_ID) -> SubIssue
         title=f"Title of {sub_issue_id}",
         description=f"Description of {sub_issue_id}",
         metadata=MetadataRecord(),
+        added_at=RAISED_AT,
     )
 
 
@@ -122,10 +123,35 @@ def test_sub_issue_can_be_split_again_when_the_tree_grows():
     assert (sleeve.position, replacement.position) == (1, 2)
 
 
-def test_adding_a_sub_issue_records_no_event_when_the_issue_was_rebuilt():
+def test_added_event_is_recorded_with_its_place_when_a_sub_issue_is_added():
+    issue = _rebuild([_sub("repair", ISSUE_ID, 1)])
+
+    _add(issue, "sleeve", parent_id="repair")
+    _add(issue, "replacement", parent_id="repair")
+
+    assert issue.pull_events() == (
+        SubIssueAdded(
+            occurred_at=RAISED_AT,
+            issue_id=ISSUE_ID,
+            sub_issue_id="sleeve",
+            parent_id="repair",
+            position=1,
+        ),
+        SubIssueAdded(
+            occurred_at=RAISED_AT,
+            issue_id=ISSUE_ID,
+            sub_issue_id="replacement",
+            parent_id="repair",
+            position=2,
+        ),
+    )
+
+
+def test_no_event_is_recorded_when_a_sub_issue_is_refused():
     issue = _rebuild([])
 
-    _add(issue, "ut-survey")
+    with pytest.raises(SubIssueParentNotFoundError):
+        _add(issue, "sleeve", parent_id="repair")
 
     assert issue.pull_events() == ()
 
@@ -163,7 +189,11 @@ def test_sub_issue_is_rejected_when_a_required_field_is_blank(field: str):
 
     with pytest.raises(IssueFieldEmptyError):
         issue.add_sub_issue(
-            sub_issue_id="ut-survey", parent_id=ISSUE_ID, metadata=MetadataRecord(), **values
+            sub_issue_id="ut-survey",
+            parent_id=ISSUE_ID,
+            metadata=MetadataRecord(),
+            added_at=RAISED_AT,
+            **values,
         )
 
     assert issue.sub_issues == ()
@@ -230,6 +260,7 @@ def test_sub_issue_keeps_its_fields_when_added():
         title="UT survey",
         description="Rope access UT survey of the splash zone",
         metadata=metadata,
+        added_at=RAISED_AT,
     )
 
     assert (added.title, added.description, added.metadata) == (

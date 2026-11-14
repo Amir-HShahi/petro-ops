@@ -14,7 +14,7 @@ from typing import Any, TextIO
 import structlog
 
 from offline_rag.bootstrap import IssueWiring, build_issue, configure_logging
-from offline_rag.issue.application.commands import RaiseIssue
+from offline_rag.issue.application.commands import AddSubIssue, RaiseIssue
 from offline_rag.issue.interface.response_bodies import issue_body, issue_summary_body
 
 # The Problem Details helpers depend only on the shared error categories, so every
@@ -45,12 +45,19 @@ def build_parser() -> argparse.ArgumentParser:
     raise_command.add_argument("--node", required=True, help="Id of the owner Node.")
     raise_command.add_argument("--title", required=True)
     raise_command.add_argument("--description", required=True)
-    raise_command.add_argument("--domain", help="Metadata: the domain, such as asset integrity.")
-    raise_command.add_argument("--subdomain")
-    raise_command.add_argument("--project")
-    raise_command.add_argument(
-        "--tag", action="append", default=[], help="Metadata tag. Repeat for more tags."
+    _add_metadata_arguments(raise_command)
+
+    add_sub_issue = commands.add_parser(
+        "add-sub-issue",
+        help="Split a part off an Issue, or off one of its SubIssues; it goes last.",
     )
+    add_sub_issue.add_argument("issue_id", help="The Issue to split.")
+    add_sub_issue.add_argument(
+        "--parent", help="Id of the SubIssue to split further. Leave out to split the Issue."
+    )
+    add_sub_issue.add_argument("--title", required=True)
+    add_sub_issue.add_argument("--description", required=True)
+    _add_metadata_arguments(add_sub_issue)
 
     show = commands.add_parser("show", help="Print an Issue with its SubIssue tree.")
     show.add_argument("issue_id", help="The id that `issue raise` printed.")
@@ -69,6 +76,7 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
     structlog.contextvars.bind_contextvars(request_id=request_id)
     commands: dict[str, Command] = {
         "raise": _raise_issue,
+        "add-sub-issue": _add_sub_issue,
         "show": _show_issue,
         "list": _list_issues,
     }
@@ -99,21 +107,47 @@ def run() -> None:
     sys.exit(main())
 
 
+def _add_metadata_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--domain", help="Metadata: the domain, such as asset integrity.")
+    parser.add_argument("--subdomain")
+    parser.add_argument("--project")
+    parser.add_argument(
+        "--tag", action="append", default=[], help="Metadata tag. Repeat for more tags."
+    )
+
+
+def _metadata(arguments: argparse.Namespace) -> MetadataRecord:
+    return MetadataRecord(
+        domain=arguments.domain,
+        subdomain=arguments.subdomain,
+        project=arguments.project,
+        tags=tuple(arguments.tag),
+    )
+
+
 def _raise_issue(arguments: argparse.Namespace, issue: IssueWiring) -> dict[str, Any]:
     raised = issue.raise_issue_handler.raise_issue(
         RaiseIssue(
             owner_node_id=NodeIdentifier(arguments.node),
             title=arguments.title,
             description=arguments.description,
-            metadata=MetadataRecord(
-                domain=arguments.domain,
-                subdomain=arguments.subdomain,
-                project=arguments.project,
-                tags=tuple(arguments.tag),
-            ),
+            metadata=_metadata(arguments),
         )
     )
     return issue_body(raised)
+
+
+def _add_sub_issue(arguments: argparse.Namespace, issue: IssueWiring) -> dict[str, Any]:
+    split, added = issue.add_sub_issue_handler.add_sub_issue(
+        AddSubIssue(
+            issue_id=arguments.issue_id,
+            parent_id=arguments.parent,
+            title=arguments.title,
+            description=arguments.description,
+            metadata=_metadata(arguments),
+        )
+    )
+    return {"added_sub_issue_id": added.sub_issue_id} | issue_body(split)
 
 
 def _show_issue(arguments: argparse.Namespace, issue: IssueWiring) -> dict[str, Any]:

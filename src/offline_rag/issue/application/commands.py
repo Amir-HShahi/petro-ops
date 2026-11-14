@@ -21,3 +21,22 @@ class RaiseIssue:
     title: str
     description: str
     metadata: MetadataRecord
+
+
+@dataclass(frozen=True, kw_only=True)
+class AddSubIssue:
+    """Split a part off an Issue, or off one of its SubIssues, by hand (spec §12.2).
+
+    Attributes:
+        issue_id: The Issue the SubIssue belongs to.
+        parent_id: The SubIssue being split, or None to split the Issue itself.
+        title: A short name of the SubIssue.
+        description: What the SubIssue is about.
+        metadata: Its structured metadata (spec §7.5).
+    """
+
+    issue_id: str
+    parent_id: str | None
+    title: str
+    description: str
+    metadata: MetadataRecord

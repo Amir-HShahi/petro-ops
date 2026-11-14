@@ -12,7 +12,7 @@ from offline_rag.issue.domain.errors import (
     SubIssueIdTakenError,
     SubIssueParentNotFoundError,
 )
-from offline_rag.issue.domain.events import IssueRaised, SimilarIssueFound
+from offline_rag.issue.domain.events import IssueRaised, SimilarIssueFound, SubIssueAdded
 from offline_rag.issue.domain.issue_status import IssueStatus
 from offline_rag.issue.domain.similar_issue import SimilarIssueFlag
 from offline_rag.issue.domain.sub_issue import SubIssue
@@ -206,13 +206,16 @@ class Issue:
         title: str,
         description: str,
         metadata: MetadataRecord,
+        added_at: datetime,
     ) -> SubIssue:
         """Split a part off this Issue or off one of its SubIssues (spec §12.2).
 
         The new SubIssue starts as `NEW` and goes last among the children of its parent.
+        The Issue records `SubIssueAdded`; take it with `pull_events` after saving.
 
         Args:
             parent_id: The Issue id, or the id of the SubIssue being split.
+            added_at: When it was added, timezone-aware.
 
         Raises:
             IssueFieldEmptyError: The id, title or description is empty.
@@ -240,6 +243,15 @@ class Issue:
             status=IssueStatus.NEW,
         )
         self._sub_issues.append(sub_issue)
+        self._pending_events.append(
+            SubIssueAdded(
+                occurred_at=added_at,
+                issue_id=self._issue_id,
+                sub_issue_id=sub_issue_id,
+                parent_id=parent_id,
+                position=sub_issue.position,
+            )
+        )
         return sub_issue
 
     def pull_events(self) -> tuple[DomainEvent, ...]:

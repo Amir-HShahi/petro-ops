@@ -27,6 +27,24 @@ INSERT INTO sub_issue
 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
 """
 
+_UPDATE_ISSUE = """
+UPDATE issue SET title = %s, description = %s, metadata = %s, status = %s WHERE issue_id = %s
+"""
+
+# A SubIssue is never removed, so saving writes each one: new rows are added and
+# stored ones take their current values.
+_UPSERT_SUB_ISSUE = (
+    _INSERT_SUB_ISSUE
+    + """
+ON CONFLICT (issue_id, sub_issue_id) DO UPDATE SET
+    position = EXCLUDED.position,
+    title = EXCLUDED.title,
+    description = EXCLUDED.description,
+    metadata = EXCLUDED.metadata,
+    status = EXCLUDED.status
+"""
+)
+
 _INSERT_SIMILAR_ISSUE_FLAG = """
 INSERT INTO similar_issue_flag (issue_id, similar_issue_id, kind, score) VALUES (%s, %s, %s, %s)
 """
@@ -108,24 +126,51 @@ class PostgresIssueRepository:
                 ),
             )
             for sub_issue in issue.sub_issues:
-                connection.execute(
-                    _INSERT_SUB_ISSUE,
-                    (
-                        issue.issue_id,
-                        sub_issue.sub_issue_id,
-                        sub_issue.parent_id,
-                        sub_issue.position,
-                        sub_issue.title,
-                        sub_issue.description,
-                        Jsonb(asdict(sub_issue.metadata)),
-                        sub_issue.status.value,
-                    ),
-                )
+                connection.execute(_INSERT_SUB_ISSUE, _sub_issue_values(issue, sub_issue))
             for flag in issue.similar_issue_flags:
                 connection.execute(
                     _INSERT_SIMILAR_ISSUE_FLAG,
                     (issue.issue_id, flag.similar_issue_id, flag.kind.value, flag.score),
                 )
+
+    def save(self, issue: Issue) -> None:
+        """Store the changes of a stored Issue and its SubIssues in one transaction.
+
+        Its similar-Issue flags never change after it is raised, so they are not written.
+
+        Raises:
+            IssueNotFoundError: No Issue has this id.
+            IssueStorageError: The database cannot be written, or two SubIssues were
+                given the same place at once.
+        """
+        with self._database.transaction("save") as connection:
+            updated = connection.execute(
+                _UPDATE_ISSUE,
+                (
+                    issue.title,
+                    issue.description,
+                    Jsonb(asdict(issue.metadata)),
+                    issue.status.value,
+                    issue.issue_id,
+                ),
+            )
+            if updated.rowcount == 0:
+                raise IssueNotFoundError(issue.issue_id)
+            for sub_issue in issue.sub_issues:
+                connection.execute(_UPSERT_SUB_ISSUE, _sub_issue_values(issue, sub_issue))
+
+
+def _sub_issue_values(issue: Issue, sub_issue: SubIssue) -> tuple[object, ...]:
+    return (
+        issue.issue_id,
+        sub_issue.sub_issue_id,
+        sub_issue.parent_id,
+        sub_issue.position,
+        sub_issue.title,
+        sub_issue.description,
+        Jsonb(asdict(sub_issue.metadata)),
+        sub_issue.status.value,
+    )
 
 
 def _sub_issues_by_issue(

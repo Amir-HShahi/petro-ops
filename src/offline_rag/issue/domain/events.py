@@ -27,3 +27,18 @@ class SimilarIssueFound(DomainEvent):
     similar_issue_id: str
     kind: SimilarIssueKind
     score: float
+
+
+@dataclass(frozen=True, kw_only=True)
+class SubIssueAdded(DomainEvent):
+    """A SubIssue was split off an Issue or off another SubIssue by hand (spec §12.2).
+
+    Attributes:
+        parent_id: The Issue id, or the id of the SubIssue it was split from.
+        position: Its place among the SubIssues of that parent, from 1.
+    """
+
+    issue_id: str
+    sub_issue_id: str
+    parent_id: str
+    position: int

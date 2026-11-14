@@ -85,7 +85,7 @@ Add a row in the same PR that adds the code.
 | `ISSUE_INVALID_SIMILAR_ISSUE_FLAG` | Domain | A stored similar-Issue flag points at its own Issue, or the same Issue is flagged twice. | Remove the extra flag from `similar_issue_flag`. |
 | `ISSUE_NOT_FOUND` | Not found | No Issue has the requested id. | Check the id that `issue raise` printed, or list the Node's Issues with `issue list`. |
 | `ISSUE_OWNER_NODE_NOT_FOUND` | Not found | An Issue was raised for a Node that is not registered in Organizational Hierarchy. | Register the Node first, for example with `uv run organization import-nodes`. |
-| `ISSUE_STORAGE_FAILED` | Infrastructure | The local database of Issues cannot be read or written. | Check that Postgres is running and the migrations have run, then try again. |
+| `ISSUE_STORAGE_FAILED` | Infrastructure | The local database of Issues cannot be read or written, or two SubIssues were added under the same parent at the same moment. | Check that Postgres is running and the migrations have run, then try again. |
 | `ISSUE_NODE_REGISTRY_UNAVAILABLE` | Infrastructure | The registered Nodes of Organizational Hierarchy cannot be read, so the owner of a new Issue cannot be checked. | Check that Postgres is running and `DATABASE_URL` points to it. |
 | `EVALUATION_INVALID_JUDGE_THRESHOLD` | Domain | A judge threshold is not a whole number of points from 1 to 20. | Give a score from 1 to 20, such as 18. |
 | `KNOWLEDGE_EMPTY_FILE` | Domain | A submitted file has no content. | Submit the file again with its content. |

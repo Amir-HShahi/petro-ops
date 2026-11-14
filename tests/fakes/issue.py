@@ -31,3 +31,7 @@ class InMemoryIssueRepository:
 
     def add(self, issue: Issue) -> None:
         self.issues[issue.issue_id] = issue
+
+    def save(self, issue: Issue) -> None:
+        self.get_by_id(issue.issue_id)
+        self.issues[issue.issue_id] = issue

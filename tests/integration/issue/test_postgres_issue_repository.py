@@ -54,6 +54,7 @@ def test_issue_and_its_sub_issue_tree_survive_a_round_trip_when_stored(
             title=f"Title of {sub_issue_id}",
             description=f"Description of {sub_issue_id}",
             metadata=MetadataRecord(tags=(sub_issue_id,)),
+            added_at=RAISED_AT,
         )
     repository = PostgresIssueRepository(database)
 
@@ -92,6 +93,54 @@ def test_similar_issue_flags_survive_a_round_trip_in_their_order_when_stored(
 
     assert repository.get_by_id("riser-r3").similar_issue_flags == flags
     assert repository.find_by_owner(PLATFORM)[0].similar_issue_flags == flags
+
+
+def _add_sub(issue: Issue, sub_issue_id: str, parent_id: str) -> None:
+    issue.add_sub_issue(
+        sub_issue_id=sub_issue_id,
+        parent_id=parent_id,
+        title=f"Title of {sub_issue_id}",
+        description=f"Description of {sub_issue_id}",
+        metadata=MetadataRecord(),
+        added_at=RAISED_AT,
+    )
+
+
+def test_new_sub_issues_are_stored_when_a_stored_issue_is_saved(database: PostgresDatabase):
+    repository = PostgresIssueRepository(database)
+    repository.add(_issue("riser-r3"))
+    loaded = repository.get_by_id("riser-r3")
+
+    _add_sub(loaded, "repair", "riser-r3")
+    repository.save(loaded)
+    reloaded = repository.get_by_id("riser-r3")
+    _add_sub(reloaded, "sleeve", "repair")
+    repository.save(reloaded)
+
+    stored = repository.get_by_id("riser-r3")
+    assert [sub.sub_issue_id for sub in stored.children_of("riser-r3")] == ["repair"]
+    assert [sub.sub_issue_id for sub in stored.children_of("repair")] == ["sleeve"]
+
+
+def test_issue_is_not_found_when_an_unknown_issue_is_saved(database: PostgresDatabase):
+    with pytest.raises(IssueNotFoundError):
+        PostgresIssueRepository(database).save(_issue("never-added"))
+
+
+def test_second_save_is_refused_when_two_sub_issues_take_the_same_place_at_once(
+    database: PostgresDatabase,
+):
+    repository = PostgresIssueRepository(database)
+    repository.add(_issue("riser-r3"))
+    first, second = repository.get_by_id("riser-r3"), repository.get_by_id("riser-r3")
+    _add_sub(first, "survey", "riser-r3")
+    _add_sub(second, "repair", "riser-r3")
+
+    repository.save(first)
+    with pytest.raises(IssueStorageError):
+        repository.save(second)
+
+    assert [sub.sub_issue_id for sub in repository.get_by_id("riser-r3").sub_issues] == ["survey"]
 
 
 def test_issue_is_not_found_when_its_id_is_unknown(database: PostgresDatabase):
@@ -244,6 +293,62 @@ def test_cli_flags_the_first_issue_when_the_same_problem_is_raised_again(
     assert first["similar_issues"] == []
 
 
+def test_cli_builds_a_sub_issue_tree_when_sub_issues_are_added(
+    settings: Settings, capsys: pytest.CaptureFixture[str]
+):
+    issue_id = _raise_riser_issue(settings, capsys)["issue_id"]
+
+    repair = _run(
+        [
+            "add-sub-issue",
+            issue_id,
+            "--title",
+            "Permanent repair option",
+            "--description",
+            "Choose between a clamp-on sleeve and a riser section replacement.",
+        ],
+        settings,
+        capsys,
+    )
+    sleeve = _run(
+        [
+            "add-sub-issue",
+            issue_id,
+            "--parent",
+            repair["added_sub_issue_id"],
+            "--title",
+            "Clamp-on sleeve",
+            "--description",
+            "Check whether a sleeve can carry the riser loads.",
+            "--tag",
+            "sleeve",
+        ],
+        settings,
+        capsys,
+    )
+    shown = _run(["show", issue_id], settings, capsys)
+
+    [repair_body] = shown["sub_issues"]
+    assert repair_body["sub_issue_id"] == repair["added_sub_issue_id"]
+    assert (repair_body["position"], repair_body["status"]) == (1, "new")
+    [sleeve_body] = repair_body["sub_issues"]
+    assert sleeve_body["sub_issue_id"] == sleeve["added_sub_issue_id"]
+    assert sleeve_body["metadata"]["tags"] == ["sleeve"]
+    assert shown["sub_issues"] == sleeve["sub_issues"]
+
+
+def test_cli_refuses_a_sub_issue_when_its_parent_is_not_in_the_issue(
+    settings: Settings, capsys: pytest.CaptureFixture[str]
+):
+    issue_id = _raise_riser_issue(settings, capsys)["issue_id"]
+    arguments = ["add-sub-issue", issue_id, "--parent", "missing", "--title", "T"]
+
+    assert main([*arguments, "--description", "D"], settings=settings) == EXIT_FAILED
+
+    problem = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+    assert problem["type"] == "ISSUE_SUB_ISSUE_PARENT_NOT_FOUND"
+
+
 @pytest.mark.parametrize(
     ("arguments", "code"),
     [
@@ -256,6 +361,10 @@ def test_cli_flags_the_first_issue_when_the_same_problem_is_raised_again(
             "ISSUE_FIELD_EMPTY",
         ),
         (["show", "missing"], "ISSUE_NOT_FOUND"),
+        (
+            ["add-sub-issue", "missing", "--title", "T", "--description", "D"],
+            "ISSUE_NOT_FOUND",
+        ),
     ],
 )
 def test_cli_prints_problem_details_when_the_command_fails(

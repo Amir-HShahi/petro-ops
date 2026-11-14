@@ -75,9 +75,13 @@ An Issue is a problem a Node works on, split into a tree of SubIssues (spec §12
 
 ```bash
 uv run issue raise --node platform_sp12 --title "Riser R-3 splash zone corrosion" --description "Gas export riser R-3 is losing wall in the splash zone." --domain "asset integrity" --tag riser
+uv run issue add-sub-issue <issue_id> --title "Permanent repair option" --description "Choose between a clamp-on sleeve and a section replacement."
+uv run issue add-sub-issue <issue_id> --parent <sub_issue_id> --title "Clamp-on sleeve" --description "Check whether a sleeve can carry the riser loads."
 uv run issue show <issue_id>
 uv run issue list --node platform_sp12
 ```
+
+`add-sub-issue` prints the new id as `added_sub_issue_id`. Pass it as `--parent` to split that SubIssue further; a new SubIssue goes last among its siblings.
 
 ## Checks
 

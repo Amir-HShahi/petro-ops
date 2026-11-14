@@ -8,6 +8,7 @@ import pika
 import structlog
 from fastapi import APIRouter
 
+from offline_rag.issue.application.add_sub_issue import AddSubIssueHandler
 from offline_rag.issue.application.issue_queries import IssueQueries
 from offline_rag.issue.application.raise_issue import RaiseIssueHandler
 from offline_rag.issue.domain.similar_issue import SimilarIssueDetector
@@ -135,6 +136,7 @@ class IssueWiring:
     """The Issue Management use cases and queries, and the connections they share."""
 
     raise_issue_handler: RaiseIssueHandler
+    add_sub_issue_handler: AddSubIssueHandler
     queries: IssueQueries
     database: IssueDatabase
     organization: OrganizationWiring
@@ -397,19 +399,28 @@ def build_issue(settings: Settings) -> IssueWiring:
         connect_timeout_s=settings.database_connect_timeout_s,
     )
     issue_repository = PostgresIssueRepository(database)
+    clock = SystemClock()
+    id_generator = UuidIdGenerator()
+    event_publisher = InProcessEventPublisher()
     # An Issue's owner Node is checked against Organizational Hierarchy (spec §12).
     organization = build_organization(settings)
     return IssueWiring(
         raise_issue_handler=RaiseIssueHandler(
             issue_repository=issue_repository,
             node_directory=IssueNodeDirectory(organization.node_queries),
-            clock=SystemClock(),
-            id_generator=UuidIdGenerator(),
-            event_publisher=InProcessEventPublisher(),
+            clock=clock,
+            id_generator=id_generator,
+            event_publisher=event_publisher,
             detector=SimilarIssueDetector(
                 duplicate_from=settings.similar_issue_duplicate_from,
                 overlap_from=settings.similar_issue_overlap_from,
             ),
+        ),
+        add_sub_issue_handler=AddSubIssueHandler(
+            issue_repository=issue_repository,
+            clock=clock,
+            id_generator=id_generator,
+            event_publisher=event_publisher,
         ),
         queries=IssueQueries(issue_repository=issue_repository),
         database=database,
