@@ -77,6 +77,11 @@ Add a row in the same PR that adds the code.
 | `ORGANIZATION_TRANSFER_TOPIC_REQUIRED_AND_EXCLUDED` | Domain | A topic is both required and excluded in a Layer's transfer rules. `details.topics` lists them. | Keep each topic in one list only. |
 | `ORGANIZATION_TRANSFER_RULE_FIELD_EMPTY` | Domain | A topic, the output format or the source reference level of a transfer rule is blank. `details.field` names it. | Fill in that field. |
 | `ORGANIZATION_INVALID_PACKAGE_LENGTH` | Domain | The maximum TransferPackage length is not a whole number of tokens above 0. | Give a positive number of tokens. |
+| `ISSUE_FIELD_EMPTY` | Domain | The id, title or description of an Issue or a SubIssue is blank. `details.field` names it. | Fill in that field. |
+| `ISSUE_SUB_ISSUE_ID_TAKEN` | Domain | A SubIssue id is already used by its Issue or by another SubIssue of the same Issue. | Give the SubIssue another id. |
+| `ISSUE_SUB_ISSUE_PARENT_NOT_FOUND` | Domain | A SubIssue's parent is neither its Issue nor one of that Issue's SubIssues. | Split the Issue itself or one of its existing SubIssues. |
+| `ISSUE_SUB_ISSUE_CYCLE` | Domain | Stored SubIssues are each other's parents, so they do not form a tree. `details.sub_issue_ids` lists them. | Fix the parents of those SubIssues so each one leads up to the Issue. |
+| `ISSUE_INVALID_SUB_ISSUE_POSITION` | Domain | The SubIssues under one parent are not numbered 1, 2, 3 and on. | Renumber the SubIssues under that parent without gaps. |
 | `EVALUATION_INVALID_JUDGE_THRESHOLD` | Domain | A judge threshold is not a whole number of points from 1 to 20. | Give a score from 1 to 20, such as 18. |
 | `KNOWLEDGE_EMPTY_FILE` | Domain | A submitted file has no content. | Submit the file again with its content. |
 | `KNOWLEDGE_UNSUPPORTED_FORMAT` | Domain | A submitted file is not DOC, DOCX or PDF. The format is read from the file content, not its name. | Convert the file to DOC, DOCX or PDF. |
