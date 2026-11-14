@@ -70,3 +70,17 @@ class InvalidSubIssuePositionError(DomainError):
             f"{positions}. Their positions must run 1, 2, 3 and on without gaps.",
             details={"issue_id": issue_id, "parent_id": parent_id, "positions": positions},
         )
+
+
+class InvalidSimilarIssueFlagError(DomainError):
+    """A similar-Issue flag points at the Issue itself, or the same Issue is flagged twice."""
+
+    code = "ISSUE_INVALID_SIMILAR_ISSUE_FLAG"
+
+    def __init__(self, *, issue_id: str, similar_issue_id: str) -> None:
+        """Create the error for the flag that cannot be kept."""
+        super().__init__(
+            f"Issue '{issue_id}' cannot be flagged as similar to '{similar_issue_id}': "
+            "an Issue is never similar to itself, and each other Issue is flagged once.",
+            details={"issue_id": issue_id, "similar_issue_id": similar_issue_id},
+        )

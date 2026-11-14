@@ -10,6 +10,7 @@ import structlog
 from offline_rag.bootstrap import build_organization
 from offline_rag.issue.application.errors import IssueNotFoundError
 from offline_rag.issue.domain.issue import Issue
+from offline_rag.issue.domain.similar_issue import SimilarIssueFlag, SimilarIssueKind
 from offline_rag.issue.infrastructure.errors import IssueStorageError
 from offline_rag.issue.infrastructure.postgres_database import PostgresDatabase
 from offline_rag.issue.infrastructure.postgres_issue_repository import PostgresIssueRepository
@@ -66,6 +67,31 @@ def test_issue_and_its_sub_issue_tree_survive_a_round_trip_when_stored(
     assert [sub.sub_issue_id for sub in stored.children_of("riser-r3")] == ["survey", "repair"]
     assert [sub.sub_issue_id for sub in stored.children_of("repair")] == ["sleeve", "replacement"]
     assert stored.children_of("repair")[1].metadata == MetadataRecord(tags=("replacement",))
+
+
+def test_similar_issue_flags_survive_a_round_trip_in_their_order_when_stored(
+    database: PostgresDatabase,
+):
+    repository = PostgresIssueRepository(database)
+    flags = (
+        SimilarIssueFlag(similar_issue_id="b-older", kind=SimilarIssueKind.DUPLICATE, score=0.41),
+        SimilarIssueFlag(similar_issue_id="a-older", kind=SimilarIssueKind.OVERLAP, score=0.37),
+        SimilarIssueFlag(similar_issue_id="c-older", kind=SimilarIssueKind.OVERLAP, score=0.26),
+    )
+    issue = Issue.raise_issue(
+        issue_id="riser-r3",
+        owner_node_id=PLATFORM,
+        title="Riser R-3 wall loss",
+        description="Wall loss on riser R-3.",
+        metadata=MetadataRecord(),
+        raised_at=RAISED_AT,
+        similar_issue_flags=flags,
+    )
+
+    repository.add(issue)
+
+    assert repository.get_by_id("riser-r3").similar_issue_flags == flags
+    assert repository.find_by_owner(PLATFORM)[0].similar_issue_flags == flags
 
 
 def test_issue_is_not_found_when_its_id_is_unknown(database: PostgresDatabase):
@@ -186,8 +212,36 @@ def test_cli_shows_and_lists_the_issue_when_it_was_raised(
             "status": "new",
             "raised_at": raised["raised_at"],
             "sub_issue_count": 0,
+            "similar_issue_count": 0,
         }
     ]
+
+
+def test_cli_flags_the_first_issue_when_the_same_problem_is_raised_again(
+    settings: Settings, capsys: pytest.CaptureFixture[str]
+):
+    first = _raise_riser_issue(settings, capsys)
+
+    again = _run(
+        [
+            "raise",
+            "--node",
+            "platform_sp12",
+            "--title",
+            "Splash zone corrosion on riser R-3",
+            "--description",
+            "Riser R-3 is losing wall in the splash zone.",
+        ],
+        settings,
+        capsys,
+    )
+    shown = _run(["show", again["issue_id"]], settings, capsys)
+
+    assert [(flag["issue_id"], flag["kind"]) for flag in again["similar_issues"]] == [
+        (first["issue_id"], "duplicate")
+    ]
+    assert shown["similar_issues"] == again["similar_issues"]
+    assert first["similar_issues"] == []
 
 
 @pytest.mark.parametrize(

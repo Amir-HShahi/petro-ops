@@ -15,8 +15,9 @@ from offline_rag.issue.application.errors import IssueNotFoundError, OwnerNodeNo
 from offline_rag.issue.application.issue_queries import IssueQueries
 from offline_rag.issue.application.raise_issue import RaiseIssueHandler
 from offline_rag.issue.domain.errors import IssueFieldEmptyError
-from offline_rag.issue.domain.events import IssueRaised
+from offline_rag.issue.domain.events import IssueRaised, SimilarIssueFound
 from offline_rag.issue.domain.issue_status import IssueStatus
+from offline_rag.issue.domain.similar_issue import SimilarIssueDetector, SimilarIssueKind
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
 
@@ -54,6 +55,7 @@ def handler(
         clock=FakeClock(NOW),
         id_generator=FakeIdGenerator("issue"),
         event_publisher=publisher,
+        detector=SimilarIssueDetector(duplicate_from=0.40, overlap_from=0.25),
     )
 
 
@@ -128,3 +130,43 @@ def test_queries_raise_not_found_when_the_id_is_unknown(repository: InMemoryIssu
         IssueQueries(issue_repository=repository).get("missing")
 
     assert caught.value.code == "ISSUE_NOT_FOUND"
+
+
+def test_similar_issue_of_the_node_is_flagged_when_a_new_issue_repeats_it(
+    handler: RaiseIssueHandler, publisher: InMemoryEventPublisher
+):
+    handler.raise_issue(_command())
+    handler.raise_issue(_command(owner_node_id=NodeIdentifier("sp12_inspection_team")))
+
+    repeated = handler.raise_issue(
+        _command(
+            title="Splash zone corrosion on riser R-3",
+            description="Riser R-3 is losing wall in the splash zone.",
+        )
+    )
+
+    [flag] = repeated.similar_issue_flags
+    assert (flag.similar_issue_id, flag.kind) == ("issue-1", SimilarIssueKind.DUPLICATE)
+    assert publisher.events[-1] == SimilarIssueFound(
+        occurred_at=NOW,
+        issue_id="issue-3",
+        similar_issue_id="issue-1",
+        kind=SimilarIssueKind.DUPLICATE,
+        score=flag.score,
+    )
+
+
+def test_no_issue_is_flagged_when_the_new_one_is_about_something_else(
+    handler: RaiseIssueHandler, publisher: InMemoryEventPublisher
+):
+    handler.raise_issue(_command())
+
+    other = handler.raise_issue(
+        _command(
+            title="Gas compressor K-101 vibration",
+            description="Vibration on compressor K-101 rose above the alarm level.",
+        )
+    )
+
+    assert other.similar_issue_flags == ()
+    assert [type(event) for event in publisher.events] == [IssueRaised, IssueRaised]

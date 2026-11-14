@@ -10,6 +10,7 @@ from fastapi import APIRouter
 
 from offline_rag.issue.application.issue_queries import IssueQueries
 from offline_rag.issue.application.raise_issue import RaiseIssueHandler
+from offline_rag.issue.domain.similar_issue import SimilarIssueDetector
 from offline_rag.issue.infrastructure.organization_node_directory import (
     OrganizationNodeDirectory as IssueNodeDirectory,
 )
@@ -405,6 +406,10 @@ def build_issue(settings: Settings) -> IssueWiring:
             clock=SystemClock(),
             id_generator=UuidIdGenerator(),
             event_publisher=InProcessEventPublisher(),
+            detector=SimilarIssueDetector(
+                duplicate_from=settings.similar_issue_duplicate_from,
+                overlap_from=settings.similar_issue_overlap_from,
+            ),
         ),
         queries=IssueQueries(issue_repository=issue_repository),
         database=database,

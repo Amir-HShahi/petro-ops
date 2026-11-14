@@ -17,6 +17,10 @@ def issue_body(issue: Issue) -> dict[str, Any]:
         "status": issue.status.value,
         "raised_at": issue.raised_at.isoformat(),
         "metadata": _metadata_body(issue.metadata),
+        "similar_issues": [
+            {"issue_id": flag.similar_issue_id, "kind": flag.kind.value, "score": flag.score}
+            for flag in issue.similar_issue_flags
+        ],
         "sub_issues": _children_body(issue, issue.issue_id),
     }
 
@@ -29,6 +33,7 @@ def issue_summary_body(issue: Issue) -> dict[str, Any]:
         "status": issue.status.value,
         "raised_at": issue.raised_at.isoformat(),
         "sub_issue_count": len(issue.sub_issues),
+        "similar_issue_count": len(issue.similar_issue_flags),
     }
 
 

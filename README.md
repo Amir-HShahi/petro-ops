@@ -71,7 +71,7 @@ uv run organization define-transfer-rule 1 --detail-level managerial --required-
 
 ## Issues
 
-An Issue is a problem a Node works on, split into a tree of SubIssues (spec §12). An Issue can only be raised for a registered Node, so import the Nodes first.
+An Issue is a problem a Node works on, split into a tree of SubIssues (spec §12). An Issue can only be raised for a registered Node, so import the Nodes first. A new Issue is compared with the Node's other Issues, and any that look like it are listed under `similar_issues` as a likely `duplicate` or an `overlap` (ADR 0012). Both Issues are kept.
 
 ```bash
 uv run issue raise --node platform_sp12 --title "Riser R-3 splash zone corrosion" --description "Gas export riser R-3 is losing wall in the splash zone." --domain "asset integrity" --tag riser

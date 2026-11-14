@@ -4,15 +4,17 @@ from typing import Any
 import pytest
 
 from offline_rag.issue.domain.errors import (
+    InvalidSimilarIssueFlagError,
     InvalidSubIssuePositionError,
     IssueFieldEmptyError,
     SubIssueCycleError,
     SubIssueIdTakenError,
     SubIssueParentNotFoundError,
 )
-from offline_rag.issue.domain.events import IssueRaised
+from offline_rag.issue.domain.events import IssueRaised, SimilarIssueFound
 from offline_rag.issue.domain.issue import Issue
 from offline_rag.issue.domain.issue_status import IssueStatus
+from offline_rag.issue.domain.similar_issue import SimilarIssueFlag, SimilarIssueKind
 from offline_rag.issue.domain.sub_issue import SubIssue
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
@@ -242,3 +244,45 @@ def test_sub_issue_keeps_its_fields_when_added():
     assert issue.metadata == MetadataRecord(domain="asset integrity")
     assert added == _sub("ut-survey", ISSUE_ID, 1)
     assert len({added, _sub("ut-survey", ISSUE_ID, 1)}) == 1
+
+
+def _flag(
+    similar_issue_id: str, kind: SimilarIssueKind = SimilarIssueKind.OVERLAP
+) -> SimilarIssueFlag:
+    return SimilarIssueFlag(similar_issue_id=similar_issue_id, kind=kind, score=0.5)
+
+
+def test_flags_are_kept_and_announced_in_order_when_issue_is_raised_with_them():
+    flags = (_flag("pump-trips", SimilarIssueKind.DUPLICATE), _flag("barrier-gap"))
+
+    issue = _raise(similar_issue_flags=flags)
+
+    assert issue.similar_issue_flags == flags
+    events = issue.pull_events()
+    assert isinstance(events[0], IssueRaised)
+    assert events[1:] == (
+        SimilarIssueFound(
+            occurred_at=RAISED_AT,
+            issue_id=ISSUE_ID,
+            similar_issue_id="pump-trips",
+            kind=SimilarIssueKind.DUPLICATE,
+            score=0.5,
+        ),
+        SimilarIssueFound(
+            occurred_at=RAISED_AT,
+            issue_id=ISSUE_ID,
+            similar_issue_id="barrier-gap",
+            kind=SimilarIssueKind.OVERLAP,
+            score=0.5,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "flags", [(ISSUE_ID,), ("pump-trips", "pump-trips")], ids=["itself", "twice"]
+)
+def test_issue_is_rejected_when_a_flag_points_at_itself_or_repeats(flags: tuple[str, ...]):
+    with pytest.raises(InvalidSimilarIssueFlagError) as caught:
+        _raise(similar_issue_flags=[_flag(similar_issue_id) for similar_issue_id in flags])
+
+    assert caught.value.code == "ISSUE_INVALID_SIMILAR_ISSUE_FLAG"

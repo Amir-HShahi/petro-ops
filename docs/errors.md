@@ -82,6 +82,7 @@ Add a row in the same PR that adds the code.
 | `ISSUE_SUB_ISSUE_PARENT_NOT_FOUND` | Domain | A SubIssue's parent is neither its Issue nor one of that Issue's SubIssues. | Split the Issue itself or one of its existing SubIssues. |
 | `ISSUE_SUB_ISSUE_CYCLE` | Domain | Stored SubIssues are each other's parents, so they do not form a tree. `details.sub_issue_ids` lists them. | Fix the parents of those SubIssues so each one leads up to the Issue. |
 | `ISSUE_INVALID_SUB_ISSUE_POSITION` | Domain | The SubIssues under one parent are not numbered 1, 2, 3 and on. | Renumber the SubIssues under that parent without gaps. |
+| `ISSUE_INVALID_SIMILAR_ISSUE_FLAG` | Domain | A stored similar-Issue flag points at its own Issue, or the same Issue is flagged twice. | Remove the extra flag from `similar_issue_flag`. |
 | `ISSUE_NOT_FOUND` | Not found | No Issue has the requested id. | Check the id that `issue raise` printed, or list the Node's Issues with `issue list`. |
 | `ISSUE_OWNER_NODE_NOT_FOUND` | Not found | An Issue was raised for a Node that is not registered in Organizational Hierarchy. | Register the Node first, for example with `uv run organization import-nodes`. |
 | `ISSUE_STORAGE_FAILED` | Infrastructure | The local database of Issues cannot be read or written. | Check that Postgres is running and the migrations have run, then try again. |

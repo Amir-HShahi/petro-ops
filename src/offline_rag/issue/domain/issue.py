@@ -5,14 +5,16 @@ from collections.abc import Iterable
 from datetime import datetime
 
 from offline_rag.issue.domain.errors import (
+    InvalidSimilarIssueFlagError,
     InvalidSubIssuePositionError,
     IssueFieldEmptyError,
     SubIssueCycleError,
     SubIssueIdTakenError,
     SubIssueParentNotFoundError,
 )
-from offline_rag.issue.domain.events import IssueRaised
+from offline_rag.issue.domain.events import IssueRaised, SimilarIssueFound
 from offline_rag.issue.domain.issue_status import IssueStatus
+from offline_rag.issue.domain.similar_issue import SimilarIssueFlag
 from offline_rag.issue.domain.sub_issue import SubIssue
 from offline_rag.shared_kernel.domain_event import DomainEvent
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
@@ -29,9 +31,12 @@ class Issue:
       form a tree: no SubIssue is its own ancestor (spec §12.2).
     - The SubIssues under one parent are numbered 1, 2, 3 and on, which is their
       place among their siblings (spec §12.2, §12.3).
+    - A new Issue keeps what comparing it with the Node's other Issues found, as
+      flags (spec §12.1, steps 3 and 4). A flag never points at the Issue itself,
+      and each other Issue is flagged at most once.
 
-    Comparing a new Issue with the Node's other Issues needs those Issues, so the
-    application layer does it before `raise_issue` (spec §12.1).
+    The comparison needs the Node's other Issues, so the application layer runs
+    `SimilarIssueDetector` and passes its flags to `raise_issue`.
     """
 
     def __init__(
@@ -45,6 +50,7 @@ class Issue:
         status: IssueStatus,
         raised_at: datetime,
         sub_issues: Iterable[SubIssue] = (),
+        similar_issue_flags: Iterable[SimilarIssueFlag] = (),
     ) -> None:
         """Rebuild an Issue, for example from storage. Use `raise_issue` for a new one.
 
@@ -57,6 +63,7 @@ class Issue:
             status: Where it stands (spec §14.1).
             raised_at: When the Node defined it, timezone-aware.
             sub_issues: Its SubIssues, in any order.
+            similar_issue_flags: The Node's Issues it looked like when it was raised.
 
         Raises:
             IssueFieldEmptyError: The id, title or description is empty.
@@ -65,10 +72,14 @@ class Issue:
             SubIssueCycleError: The SubIssues do not form a tree.
             InvalidSubIssuePositionError: The SubIssues under a parent are not numbered
                 1, 2, 3 and on.
+            InvalidSimilarIssueFlagError: A flag points at the Issue itself, or two
+                flags point at the same Issue.
         """
         _require_text(issue_id=issue_id, title=title, description=description)
         self._sub_issues = list(sub_issues)
         _check_sub_issue_tree(issue_id, self._sub_issues)
+        self._similar_issue_flags = tuple(similar_issue_flags)
+        _check_similar_issue_flags(issue_id, self._similar_issue_flags)
         self._issue_id = issue_id
         self._owner_node_id = owner_node_id
         self._title = title
@@ -88,14 +99,21 @@ class Issue:
         description: str,
         metadata: MetadataRecord,
         raised_at: datetime,
+        similar_issue_flags: Iterable[SimilarIssueFlag] = (),
     ) -> "Issue":
         """Define a new Issue for a Node, with no SubIssues yet (spec §12.1).
 
-        The Issue starts as `NEW` and records `IssueRaised`; take it with `pull_events`
-        after saving.
+        The Issue starts as `NEW` and records `IssueRaised`, then one
+        `SimilarIssueFound` per flag; take them with `pull_events` after saving.
+
+        Args:
+            similar_issue_flags: What `SimilarIssueDetector` found among the Node's
+                other Issues.
 
         Raises:
             IssueFieldEmptyError: The id, title or description is empty.
+            InvalidSimilarIssueFlagError: A flag points at the Issue itself, or two
+                flags point at the same Issue.
         """
         issue = cls(
             issue_id=issue_id,
@@ -105,9 +123,20 @@ class Issue:
             metadata=metadata,
             status=IssueStatus.NEW,
             raised_at=raised_at,
+            similar_issue_flags=similar_issue_flags,
         )
         issue._pending_events.append(
             IssueRaised(occurred_at=raised_at, issue_id=issue_id, owner_node_id=owner_node_id)
+        )
+        issue._pending_events.extend(
+            SimilarIssueFound(
+                occurred_at=raised_at,
+                issue_id=issue_id,
+                similar_issue_id=flag.similar_issue_id,
+                kind=flag.kind,
+                score=flag.score,
+            )
+            for flag in issue.similar_issue_flags
         )
         return issue
 
@@ -145,6 +174,11 @@ class Issue:
     def raised_at(self) -> datetime:
         """When the Node defined the Issue."""
         return self._raised_at
+
+    @property
+    def similar_issue_flags(self) -> tuple[SimilarIssueFlag, ...]:
+        """The Node's Issues this one looked like when it was raised, strongest first."""
+        return self._similar_issue_flags
 
     @property
     def sub_issues(self) -> tuple[SubIssue, ...]:
@@ -225,6 +259,16 @@ def _require_text(**values: str) -> None:
     for field, value in values.items():
         if not value.strip():
             raise IssueFieldEmptyError(field=field)
+
+
+def _check_similar_issue_flags(issue_id: str, flags: tuple[SimilarIssueFlag, ...]) -> None:
+    seen: set[str] = set()
+    for flag in flags:
+        if flag.similar_issue_id == issue_id or flag.similar_issue_id in seen:
+            raise InvalidSimilarIssueFlagError(
+                issue_id=issue_id, similar_issue_id=flag.similar_issue_id
+            )
+        seen.add(flag.similar_issue_id)
 
 
 def _check_sub_issue_tree(issue_id: str, sub_issues: list[SubIssue]) -> None:
