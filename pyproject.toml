@@ -116,6 +116,20 @@ source_modules = [
 ]
 forbidden_modules = ["offline_rag.organization"]
 
+[[tool.importlinter.contracts]]
+name = "Issue reads knowledge only through the queries of Knowledge Management"
+type = "forbidden"
+source_modules = ["offline_rag.issue"]
+forbidden_modules = ["offline_rag.knowledge.infrastructure"]
+# The queries reach their own adapters; only direct imports are refused.
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Issue domain and use cases do not depend on Knowledge Management"
+type = "forbidden"
+source_modules = ["offline_rag.issue.domain", "offline_rag.issue.application"]
+forbidden_modules = ["offline_rag.knowledge"]
+
 [tool.commitizen]
 name = "cz_conventional_commits"
 version_provider = "uv"

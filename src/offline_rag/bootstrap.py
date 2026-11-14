@@ -8,10 +8,18 @@ import pika
 import structlog
 from fastapi import APIRouter
 
+from offline_rag.issue.application.accept_sub_issue_candidates import (
+    AcceptSubIssueCandidatesHandler,
+)
 from offline_rag.issue.application.add_sub_issue import AddSubIssueHandler
+from offline_rag.issue.application.decompose_issue import DecomposeIssueHandler
 from offline_rag.issue.application.issue_queries import IssueQueries
 from offline_rag.issue.application.raise_issue import RaiseIssueHandler
 from offline_rag.issue.domain.similar_issue import SimilarIssueDetector
+from offline_rag.issue.infrastructure.knowledge_management_reader import (
+    KnowledgeManagementReader,
+)
+from offline_rag.issue.infrastructure.ollama_issue_decomposer import OllamaIssueDecomposer
 from offline_rag.issue.infrastructure.organization_node_directory import (
     OrganizationNodeDirectory as IssueNodeDirectory,
 )
@@ -132,22 +140,6 @@ class OrganizationWiring:
 
 
 @dataclass(frozen=True, kw_only=True)
-class IssueWiring:
-    """The Issue Management use cases and queries, and the connections they share."""
-
-    raise_issue_handler: RaiseIssueHandler
-    add_sub_issue_handler: AddSubIssueHandler
-    queries: IssueQueries
-    database: IssueDatabase
-    organization: OrganizationWiring
-
-    def close(self) -> None:
-        """Close the database pools."""
-        self.database.close()
-        self.organization.close()
-
-
-@dataclass(frozen=True, kw_only=True)
 class KnowledgeWiring:
     """The Knowledge Management use cases and queries, and the connections they share."""
 
@@ -172,6 +164,28 @@ class KnowledgeWiring:
         self.message_publisher.close()
         self.database.close()
         self.organization.close()
+
+
+@dataclass(frozen=True, kw_only=True)
+class IssueWiring:
+    """The Issue Management use cases and queries, and the connections they share.
+
+    It reads Nodes through Organizational Hierarchy and knowledge through Knowledge
+    Management, so it holds their wiring too.
+    """
+
+    raise_issue_handler: RaiseIssueHandler
+    add_sub_issue_handler: AddSubIssueHandler
+    decompose_issue_handler: DecomposeIssueHandler
+    accept_sub_issue_candidates_handler: AcceptSubIssueCandidatesHandler
+    queries: IssueQueries
+    database: IssueDatabase
+    knowledge: KnowledgeWiring
+
+    def close(self) -> None:
+        """Close the database pools and the broker connection."""
+        self.database.close()
+        self.knowledge.close()
 
 
 def configure_logging(settings: Settings) -> None:
@@ -402,12 +416,14 @@ def build_issue(settings: Settings) -> IssueWiring:
     clock = SystemClock()
     id_generator = UuidIdGenerator()
     event_publisher = InProcessEventPublisher()
-    # An Issue's owner Node is checked against Organizational Hierarchy (spec §12).
-    organization = build_organization(settings)
+    # An Issue's owner Node is checked against Organizational Hierarchy (spec §12), and
+    # its decomposition reads the chunks of KnowledgeItems (spec §12.5). Knowledge
+    # Management already holds the Organizational Hierarchy wiring, so it is reused.
+    knowledge = build_knowledge(settings)
     return IssueWiring(
         raise_issue_handler=RaiseIssueHandler(
             issue_repository=issue_repository,
-            node_directory=IssueNodeDirectory(organization.node_queries),
+            node_directory=IssueNodeDirectory(knowledge.organization.node_queries),
             clock=clock,
             id_generator=id_generator,
             event_publisher=event_publisher,
@@ -422,9 +438,25 @@ def build_issue(settings: Settings) -> IssueWiring:
             id_generator=id_generator,
             event_publisher=event_publisher,
         ),
+        decompose_issue_handler=DecomposeIssueHandler(
+            issue_repository=issue_repository,
+            knowledge_reader=KnowledgeManagementReader(knowledge.queries),
+            decomposer=OllamaIssueDecomposer(
+                base_url=settings.ollama_url,
+                timeout_s=settings.model_timeout_s,
+                prompts_dir=settings.prompts_dir,
+                model_manifest_path=settings.model_manifest_path,
+            ),
+        ),
+        accept_sub_issue_candidates_handler=AcceptSubIssueCandidatesHandler(
+            issue_repository=issue_repository,
+            clock=clock,
+            id_generator=id_generator,
+            event_publisher=event_publisher,
+        ),
         queries=IssueQueries(issue_repository=issue_repository),
         database=database,
-        organization=organization,
+        knowledge=knowledge,
     )
 
 

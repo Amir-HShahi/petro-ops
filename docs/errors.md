@@ -83,6 +83,17 @@ Add a row in the same PR that adds the code.
 | `ISSUE_SUB_ISSUE_CYCLE` | Domain | Stored SubIssues are each other's parents, so they do not form a tree. `details.sub_issue_ids` lists them. | Fix the parents of those SubIssues so each one leads up to the Issue. |
 | `ISSUE_INVALID_SUB_ISSUE_POSITION` | Domain | The SubIssues under one parent are not numbered 1, 2, 3 and on. | Renumber the SubIssues under that parent without gaps. |
 | `ISSUE_INVALID_SIMILAR_ISSUE_FLAG` | Domain | A stored similar-Issue flag points at its own Issue, or the same Issue is flagged twice. | Remove the extra flag from `similar_issue_flag`. |
+| `ISSUE_INVALID_SUB_ISSUE_CANDIDATE` | Domain | Stored SubIssue candidates share a number, have a number below 1, or an accepted one names a SubIssue the Issue does not have. | Fix the rows of that Issue in `sub_issue_candidate`. |
+| `ISSUE_SUB_ISSUE_CANDIDATE_NOT_FOUND` | Not found | An Issue has no SubIssue candidate with the number given. | Check the numbers with `issue show`, or run `issue decompose` for new candidates. |
+| `ISSUE_SUB_ISSUE_CANDIDATE_ALREADY_ACCEPTED` | Domain | A SubIssue candidate was accepted before, so it is a SubIssue already. `details.sub_issue_id` names it. | Leave that number out. |
+| `ISSUE_KNOWLEDGE_REQUIRED` | Domain | An Issue was sent for decomposition without any KnowledgeItem, so no suggestion could cite a source. | Name at least one item with `--knowledge-item`. |
+| `ISSUE_KNOWLEDGE_ITEM_NOT_FOUND` | Not found | A KnowledgeItem named for a decomposition does not exist. | Use the item id that `knowledge submit` printed. |
+| `ISSUE_KNOWLEDGE_TOO_LARGE` | Domain | The named KnowledgeItems do not fit in the model's context next to the prompt. `details` gives both sizes in tokens. | Name fewer or shorter items. |
+| `ISSUE_KNOWLEDGE_UNAVAILABLE` | Infrastructure | The chunks of the named KnowledgeItems cannot be read. | Check that Postgres is running and `DATABASE_URL` points to it. |
+| `ISSUE_MODEL_URL_NOT_LOCAL` | Infrastructure | `OLLAMA_URL` is not a loopback address, which the offline rule forbids. | Set `OLLAMA_URL` to an address on this machine, such as `http://127.0.0.1:11434`. |
+| `ISSUE_MODEL_UNAVAILABLE` | Infrastructure | The local LLM did not answer a decomposition: Ollama is not running, the model is not pulled, or it timed out. | Start Ollama, pull the model in `models/manifest.yaml`, then try again. |
+| `ISSUE_MODEL_REGISTRY_UNAVAILABLE` | Infrastructure | The `issue_decomposition` prompt or its model is missing from `prompts/registry.yaml` or `models/manifest.yaml`. | Restore the registry entries and the prompt file. |
+| `ISSUE_DECOMPOSITION_ANSWER_INVALID` | Infrastructure | The LLM's answers to a decomposition were not the JSON the prompt asks for, on every attempt. | Try again, or name other KnowledgeItems. |
 | `ISSUE_NOT_FOUND` | Not found | No Issue has the requested id. | Check the id that `issue raise` printed, or list the Node's Issues with `issue list`. |
 | `ISSUE_OWNER_NODE_NOT_FOUND` | Not found | An Issue was raised for a Node that is not registered in Organizational Hierarchy. | Register the Node first, for example with `uv run organization import-nodes`. |
 | `ISSUE_STORAGE_FAILED` | Infrastructure | The local database of Issues cannot be read or written, or two SubIssues were added under the same parent at the same moment. | Check that Postgres is running and the migrations have run, then try again. |

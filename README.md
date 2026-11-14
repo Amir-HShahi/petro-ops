@@ -83,6 +83,13 @@ uv run issue list --node platform_sp12
 
 `add-sub-issue` prints the new id as `added_sub_issue_id`. Pass it as `--parent` to split that SubIssue further; a new SubIssue goes last among its siblings.
 
+The local LLM can suggest SubIssues too. It reads the KnowledgeItems you name and cites them; a citation whose quote is not in its item is dropped. The suggestions wait as numbered candidates until you accept the ones worth keeping. This needs Ollama with the model in `models/manifest.yaml`, and takes about a minute.
+
+```bash
+uv run issue decompose <issue_id> --knowledge-item <item_id>
+uv run issue accept-sub-issue-candidates <issue_id> 1 3
+```
+
 ## Checks
 
 ```bash

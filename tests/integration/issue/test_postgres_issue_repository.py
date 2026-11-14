@@ -7,7 +7,6 @@ import psycopg
 import pytest
 import structlog
 
-from offline_rag.bootstrap import build_organization
 from offline_rag.issue.application.errors import IssueNotFoundError
 from offline_rag.issue.domain.issue import Issue
 from offline_rag.issue.domain.similar_issue import SimilarIssueFlag, SimilarIssueKind
@@ -15,7 +14,6 @@ from offline_rag.issue.infrastructure.errors import IssueStorageError
 from offline_rag.issue.infrastructure.postgres_database import PostgresDatabase
 from offline_rag.issue.infrastructure.postgres_issue_repository import PostgresIssueRepository
 from offline_rag.issue.interface.cli import EXIT_FAILED, EXIT_OK, main
-from offline_rag.organization.interface.node_registry_file import read_node_registry
 from offline_rag.settings import Settings
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
@@ -187,23 +185,6 @@ def _reset_logging() -> Iterator[None]:
     # `main` configures structlog for the whole process; later tests need the defaults.
     yield
     structlog.reset_defaults()
-
-
-@pytest.fixture
-def settings(postgres_url: str) -> Settings:
-    """Return settings for a schema whose Nodes are the case-study registry."""
-    registered = Settings(
-        database_url=postgres_url,
-        node_registry_path=ROOT / "fixtures" / "registry" / "nodes.csv",
-        log_level="error",
-    )
-    organization = build_organization(registered)
-    try:
-        for command in read_node_registry(registered.node_registry_path):
-            organization.register_node_handler.register(command)
-    finally:
-        organization.close()
-    return registered
 
 
 def _run(arguments: list[str], settings: Settings, capsys: pytest.CaptureFixture[str]) -> dict:  # type: ignore[type-arg]

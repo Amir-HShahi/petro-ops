@@ -40,3 +40,30 @@ class AddSubIssue:
     title: str
     description: str
     metadata: MetadataRecord
+
+
+@dataclass(frozen=True, kw_only=True)
+class DecomposeIssue:
+    """Ask the LLM to suggest SubIssues for an Issue, based on chosen knowledge (spec §12.2).
+
+    Attributes:
+        issue_id: The Issue to split.
+        knowledge_item_ids: The KnowledgeItems whose active chunks the LLM reads and
+            cites. At least one.
+    """
+
+    issue_id: str
+    knowledge_item_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class AcceptSubIssueCandidates:
+    """Turn chosen SubIssue candidates into SubIssues of their Issue.
+
+    Attributes:
+        issue_id: The Issue the candidates belong to.
+        numbers: The candidates to accept, in the order they should be added.
+    """
+
+    issue_id: str
+    numbers: tuple[int, ...]

@@ -12,6 +12,7 @@ from offline_rag.issue.domain.issue import Issue
 from offline_rag.issue.domain.issue_status import IssueStatus
 from offline_rag.issue.domain.similar_issue import SimilarIssueFlag, SimilarIssueKind
 from offline_rag.issue.domain.sub_issue import SubIssue
+from offline_rag.issue.domain.sub_issue_candidate import Citation, SubIssueCandidate
 from offline_rag.issue.infrastructure.postgres_database import PostgresDatabase
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
@@ -55,6 +56,12 @@ SELECT * FROM similar_issue_flag WHERE issue_id = ANY(%s)
 ORDER BY issue_id, kind <> 'duplicate', score DESC, similar_issue_id
 """
 
+_INSERT_SUB_ISSUE_CANDIDATE = """
+INSERT INTO sub_issue_candidate
+    (issue_id, number, title, description, citations, accepted_sub_issue_id)
+VALUES (%s, %s, %s, %s, %s, %s)
+"""
+
 # JSON has no tuples, so these come back as lists and are turned back into tuples.
 _TUPLE_METADATA_FIELDS = {
     field.name for field in fields(MetadataRecord) if field.type == tuple[str, ...]
@@ -83,7 +90,13 @@ class PostgresIssueRepository:
                 raise IssueNotFoundError(issue_id)
             sub_issues = _sub_issues_by_issue(connection, [issue_id])
             flags = _flags_by_issue(connection, [issue_id])
-        return _issue_from_row(row, sub_issues.get(issue_id, []), flags.get(issue_id, []))
+            candidates = _candidates_by_issue(connection, [issue_id])
+        return _issue_from_row(
+            row,
+            sub_issues.get(issue_id, []),
+            flags.get(issue_id, []),
+            candidates.get(issue_id, []),
+        )
 
     def find_by_owner(self, node_id: NodeIdentifier) -> list[Issue]:
         """Return every Issue of this Node, oldest first.
@@ -99,15 +112,19 @@ class PostgresIssueRepository:
             issue_ids = [row["issue_id"] for row in rows]
             sub_issues = _sub_issues_by_issue(connection, issue_ids)
             flags = _flags_by_issue(connection, issue_ids)
+            candidates = _candidates_by_issue(connection, issue_ids)
         return [
             _issue_from_row(
-                row, sub_issues.get(row["issue_id"], []), flags.get(row["issue_id"], [])
+                row,
+                sub_issues.get(row["issue_id"], []),
+                flags.get(row["issue_id"], []),
+                candidates.get(row["issue_id"], []),
             )
             for row in rows
         ]
 
     def add(self, issue: Issue) -> None:
-        """Store a new Issue, its SubIssues and its flags in one transaction.
+        """Store a new Issue, its SubIssues, flags and candidates in one transaction.
 
         Raises:
             IssueStorageError: The database cannot be written, or the id is taken.
@@ -132,11 +149,14 @@ class PostgresIssueRepository:
                     _INSERT_SIMILAR_ISSUE_FLAG,
                     (issue.issue_id, flag.similar_issue_id, flag.kind.value, flag.score),
                 )
+            _insert_candidates(connection, issue)
 
     def save(self, issue: Issue) -> None:
-        """Store the changes of a stored Issue and its SubIssues in one transaction.
+        """Store the changes of a stored Issue, its SubIssues and candidates in one transaction.
 
         Its similar-Issue flags never change after it is raised, so they are not written.
+        Its candidates are written again as a whole, since new suggestions replace the
+        waiting ones.
 
         Raises:
             IssueNotFoundError: No Issue has this id.
@@ -158,6 +178,48 @@ class PostgresIssueRepository:
                 raise IssueNotFoundError(issue.issue_id)
             for sub_issue in issue.sub_issues:
                 connection.execute(_UPSERT_SUB_ISSUE, _sub_issue_values(issue, sub_issue))
+            connection.execute(
+                "DELETE FROM sub_issue_candidate WHERE issue_id = %s", (issue.issue_id,)
+            )
+            _insert_candidates(connection, issue)
+
+
+def _insert_candidates(connection: Connection[DictRow], issue: Issue) -> None:
+    for candidate in issue.sub_issue_candidates:
+        connection.execute(
+            _INSERT_SUB_ISSUE_CANDIDATE,
+            (
+                issue.issue_id,
+                candidate.number,
+                candidate.title,
+                candidate.description,
+                Jsonb([asdict(citation) for citation in candidate.citations]),
+                candidate.accepted_sub_issue_id,
+            ),
+        )
+
+
+def _candidates_by_issue(
+    connection: Connection[DictRow], issue_ids: list[str]
+) -> dict[str, list[SubIssueCandidate]]:
+    if not issue_ids:
+        return {}
+    rows = connection.execute(
+        "SELECT * FROM sub_issue_candidate WHERE issue_id = ANY(%s) ORDER BY issue_id, number",
+        (issue_ids,),
+    ).fetchall()
+    candidates: dict[str, list[SubIssueCandidate]] = {}
+    for row in rows:
+        candidates.setdefault(row["issue_id"], []).append(
+            SubIssueCandidate(
+                number=row["number"],
+                title=row["title"],
+                description=row["description"],
+                citations=tuple(Citation(**citation) for citation in row["citations"]),
+                accepted_sub_issue_id=row["accepted_sub_issue_id"],
+            )
+        )
+    return candidates
 
 
 def _sub_issue_values(issue: Issue, sub_issue: SubIssue) -> tuple[object, ...]:
@@ -215,7 +277,10 @@ def _flags_by_issue(
 
 
 def _issue_from_row(
-    row: dict[str, Any], sub_issues: list[SubIssue], flags: list[SimilarIssueFlag]
+    row: dict[str, Any],
+    sub_issues: list[SubIssue],
+    flags: list[SimilarIssueFlag],
+    candidates: list[SubIssueCandidate],
 ) -> Issue:
     return Issue(
         issue_id=row["issue_id"],
@@ -227,6 +292,7 @@ def _issue_from_row(
         raised_at=row["raised_at"],
         sub_issues=sub_issues,
         similar_issue_flags=flags,
+        sub_issue_candidates=candidates,
     )
 
 

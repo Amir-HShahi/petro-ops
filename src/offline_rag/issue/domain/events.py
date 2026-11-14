@@ -42,3 +42,15 @@ class SubIssueAdded(DomainEvent):
     sub_issue_id: str
     parent_id: str
     position: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class IssueDecomposed(DomainEvent):
+    """A person accepted SubIssue candidates the LLM suggested for an Issue (spec §12.2).
+
+    Attributes:
+        sub_issue_ids: The new SubIssues, in the order they were added.
+    """
+
+    issue_id: str
+    sub_issue_ids: tuple[str, ...]

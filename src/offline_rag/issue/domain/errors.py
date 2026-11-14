@@ -1,6 +1,6 @@
 """Errors raised by the Issue Management domain."""
 
-from offline_rag.shared_kernel.errors import DomainError
+from offline_rag.shared_kernel.errors import DomainError, NotFoundError
 
 
 class IssueFieldEmptyError(DomainError):
@@ -83,4 +83,46 @@ class InvalidSimilarIssueFlagError(DomainError):
             f"Issue '{issue_id}' cannot be flagged as similar to '{similar_issue_id}': "
             "an Issue is never similar to itself, and each other Issue is flagged once.",
             details={"issue_id": issue_id, "similar_issue_id": similar_issue_id},
+        )
+
+
+class InvalidSubIssueCandidateError(DomainError):
+    """Stored SubIssue candidates share a number, or point at a SubIssue that is not there."""
+
+    code = "ISSUE_INVALID_SUB_ISSUE_CANDIDATE"
+
+    def __init__(self, *, issue_id: str, number: int) -> None:
+        """Create the error for the candidate that cannot be kept."""
+        super().__init__(
+            f"Candidate {number} of Issue '{issue_id}' cannot be kept: its number is used "
+            "twice, is below 1, or it names a SubIssue the Issue does not have.",
+            details={"issue_id": issue_id, "number": number},
+        )
+
+
+class SubIssueCandidateNotFoundError(NotFoundError):
+    """An Issue has no SubIssue candidate with the requested number."""
+
+    code = "ISSUE_SUB_ISSUE_CANDIDATE_NOT_FOUND"
+
+    def __init__(self, *, issue_id: str, number: int) -> None:
+        """Create the error for the missing candidate."""
+        super().__init__(
+            f"Issue '{issue_id}' has no SubIssue candidate {number}. Run `issue show` to "
+            "see its candidates, or `issue decompose` to get new ones.",
+            details={"issue_id": issue_id, "number": number},
+        )
+
+
+class SubIssueCandidateAlreadyAcceptedError(DomainError):
+    """A SubIssue candidate was accepted before, so it is a SubIssue already."""
+
+    code = "ISSUE_SUB_ISSUE_CANDIDATE_ALREADY_ACCEPTED"
+
+    def __init__(self, *, issue_id: str, number: int, sub_issue_id: str) -> None:
+        """Create the error for the candidate that was accepted before."""
+        super().__init__(
+            f"Candidate {number} of Issue '{issue_id}' was already accepted as SubIssue "
+            f"'{sub_issue_id}'.",
+            details={"issue_id": issue_id, "number": number, "sub_issue_id": sub_issue_id},
         )

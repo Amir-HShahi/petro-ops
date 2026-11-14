@@ -4,6 +4,7 @@ from dataclasses import asdict
 from typing import Any
 
 from offline_rag.issue.domain.issue import Issue
+from offline_rag.issue.domain.sub_issue_candidate import SubIssueCandidate
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
 
 
@@ -22,6 +23,20 @@ def issue_body(issue: Issue) -> dict[str, Any]:
             for flag in issue.similar_issue_flags
         ],
         "sub_issues": _children_body(issue, issue.issue_id),
+        "sub_issue_candidates": [
+            candidate_body(candidate) for candidate in issue.sub_issue_candidates
+        ],
+    }
+
+
+def candidate_body(candidate: SubIssueCandidate) -> dict[str, Any]:
+    """Return a SubIssue candidate with its citations and, once accepted, its SubIssue."""
+    return {
+        "number": candidate.number,
+        "title": candidate.title,
+        "description": candidate.description,
+        "citations": [asdict(citation) for citation in candidate.citations],
+        "accepted_sub_issue_id": candidate.accepted_sub_issue_id,
     }
 
 

@@ -1,21 +1,31 @@
 """The Issue aggregate root."""
 
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from dataclasses import replace
 from datetime import datetime
 
 from offline_rag.issue.domain.errors import (
     InvalidSimilarIssueFlagError,
+    InvalidSubIssueCandidateError,
     InvalidSubIssuePositionError,
     IssueFieldEmptyError,
+    SubIssueCandidateAlreadyAcceptedError,
+    SubIssueCandidateNotFoundError,
     SubIssueCycleError,
     SubIssueIdTakenError,
     SubIssueParentNotFoundError,
 )
-from offline_rag.issue.domain.events import IssueRaised, SimilarIssueFound, SubIssueAdded
+from offline_rag.issue.domain.events import (
+    IssueDecomposed,
+    IssueRaised,
+    SimilarIssueFound,
+    SubIssueAdded,
+)
 from offline_rag.issue.domain.issue_status import IssueStatus
 from offline_rag.issue.domain.similar_issue import SimilarIssueFlag
 from offline_rag.issue.domain.sub_issue import SubIssue
+from offline_rag.issue.domain.sub_issue_candidate import SubIssueCandidate
 from offline_rag.shared_kernel.domain_event import DomainEvent
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
@@ -34,6 +44,8 @@ class Issue:
     - A new Issue keeps what comparing it with the Node's other Issues found, as
       flags (spec §12.1, steps 3 and 4). A flag never points at the Issue itself,
       and each other Issue is flagged at most once.
+    - SubIssue candidates the LLM suggested have unique numbers from 1, and an
+      accepted candidate names the SubIssue it became (spec §12.2).
 
     The comparison needs the Node's other Issues, so the application layer runs
     `SimilarIssueDetector` and passes its flags to `raise_issue`.
@@ -51,6 +63,7 @@ class Issue:
         raised_at: datetime,
         sub_issues: Iterable[SubIssue] = (),
         similar_issue_flags: Iterable[SimilarIssueFlag] = (),
+        sub_issue_candidates: Iterable[SubIssueCandidate] = (),
     ) -> None:
         """Rebuild an Issue, for example from storage. Use `raise_issue` for a new one.
 
@@ -64,6 +77,7 @@ class Issue:
             raised_at: When the Node defined it, timezone-aware.
             sub_issues: Its SubIssues, in any order.
             similar_issue_flags: The Node's Issues it looked like when it was raised.
+            sub_issue_candidates: SubIssues the LLM suggested, accepted or waiting.
 
         Raises:
             IssueFieldEmptyError: The id, title or description is empty.
@@ -74,12 +88,16 @@ class Issue:
                 1, 2, 3 and on.
             InvalidSimilarIssueFlagError: A flag points at the Issue itself, or two
                 flags point at the same Issue.
+            InvalidSubIssueCandidateError: Two candidates share a number, or an
+                accepted one names a SubIssue the Issue does not have.
         """
         _require_text(issue_id=issue_id, title=title, description=description)
         self._sub_issues = list(sub_issues)
         _check_sub_issue_tree(issue_id, self._sub_issues)
         self._similar_issue_flags = tuple(similar_issue_flags)
         _check_similar_issue_flags(issue_id, self._similar_issue_flags)
+        self._sub_issue_candidates = list(sub_issue_candidates)
+        _check_sub_issue_candidates(issue_id, self._sub_issue_candidates, self._sub_issues)
         self._issue_id = issue_id
         self._owner_node_id = owner_node_id
         self._title = title
@@ -181,6 +199,11 @@ class Issue:
         return self._similar_issue_flags
 
     @property
+    def sub_issue_candidates(self) -> tuple[SubIssueCandidate, ...]:
+        """SubIssues the LLM suggested, accepted or waiting, by number."""
+        return tuple(sorted(self._sub_issue_candidates, key=lambda candidate: candidate.number))
+
+    @property
     def sub_issues(self) -> tuple[SubIssue, ...]:
         """Every SubIssue in the tree, at any depth."""
         return tuple(self._sub_issues)
@@ -223,6 +246,122 @@ class Issue:
             SubIssueParentNotFoundError: The parent is not this Issue or one of its
                 SubIssues.
         """
+        sub_issue = self._append_sub_issue(
+            sub_issue_id=sub_issue_id,
+            parent_id=parent_id,
+            title=title,
+            description=description,
+            metadata=metadata,
+        )
+        self._pending_events.append(
+            SubIssueAdded(
+                occurred_at=added_at,
+                issue_id=self._issue_id,
+                sub_issue_id=sub_issue_id,
+                parent_id=parent_id,
+                position=sub_issue.position,
+            )
+        )
+        return sub_issue
+
+    def propose_sub_issue_candidates(
+        self, candidates: Sequence[SubIssueCandidate]
+    ) -> tuple[SubIssueCandidate, ...]:
+        """Replace the waiting candidates with new LLM suggestions (spec §12.2).
+
+        Accepted candidates stay, as the record of what each SubIssue came from. The
+        new ones keep their given order and are numbered after every earlier
+        candidate, so an old number never names a new suggestion.
+
+        Args:
+            candidates: The suggestions, in the order the LLM gave them. Their own
+                numbers are replaced.
+
+        Returns:
+            The new candidates with their numbers.
+        """
+        next_number = max((candidate.number for candidate in self._sub_issue_candidates), default=0)
+        numbered = tuple(
+            replace(candidate, number=next_number + offset, accepted_sub_issue_id=None)
+            for offset, candidate in enumerate(candidates, start=1)
+        )
+        self._sub_issue_candidates = [
+            candidate for candidate in self._sub_issue_candidates if candidate.is_accepted
+        ] + list(numbered)
+        return numbered
+
+    def accept_sub_issue_candidates(
+        self,
+        *,
+        numbers: Sequence[int],
+        sub_issue_ids: Sequence[str],
+        accepted_at: datetime,
+    ) -> tuple[SubIssue, ...]:
+        """Turn chosen candidates into SubIssues of this Issue, in the order given.
+
+        Each becomes a SubIssue right under the Issue, last among its siblings. The
+        Issue records one `IssueDecomposed`. Nothing changes when a number is wrong.
+
+        Args:
+            numbers: The candidates to accept. A number given twice counts once.
+            sub_issue_ids: A new id for each distinct number, in the same order.
+            accepted_at: When they were accepted, timezone-aware.
+
+        Raises:
+            SubIssueCandidateNotFoundError: The Issue has no candidate with a number.
+            SubIssueCandidateAlreadyAcceptedError: A candidate is a SubIssue already.
+            SubIssueIdTakenError: A new id is already used in the Issue.
+        """
+        chosen = [self._waiting_candidate(number) for number in dict.fromkeys(numbers)]
+        accepted: list[SubIssue] = []
+        for candidate, sub_issue_id in zip(chosen, sub_issue_ids, strict=True):
+            accepted.append(
+                self._append_sub_issue(
+                    sub_issue_id=sub_issue_id,
+                    parent_id=self._issue_id,
+                    title=candidate.title,
+                    description=candidate.description,
+                    metadata=MetadataRecord(),
+                )
+            )
+            self._sub_issue_candidates = [
+                replace(other, accepted_sub_issue_id=sub_issue_id)
+                if other.number == candidate.number
+                else other
+                for other in self._sub_issue_candidates
+            ]
+        self._pending_events.append(
+            IssueDecomposed(
+                occurred_at=accepted_at,
+                issue_id=self._issue_id,
+                sub_issue_ids=tuple(sub.sub_issue_id for sub in accepted),
+            )
+        )
+        return tuple(accepted)
+
+    def _waiting_candidate(self, number: int) -> SubIssueCandidate:
+        candidate = next(
+            (other for other in self._sub_issue_candidates if other.number == number), None
+        )
+        if candidate is None:
+            raise SubIssueCandidateNotFoundError(issue_id=self._issue_id, number=number)
+        if candidate.accepted_sub_issue_id is not None:
+            raise SubIssueCandidateAlreadyAcceptedError(
+                issue_id=self._issue_id,
+                number=number,
+                sub_issue_id=candidate.accepted_sub_issue_id,
+            )
+        return candidate
+
+    def _append_sub_issue(
+        self,
+        *,
+        sub_issue_id: str,
+        parent_id: str,
+        title: str,
+        description: str,
+        metadata: MetadataRecord,
+    ) -> SubIssue:
         if sub_issue_id == self._issue_id or any(
             sub.sub_issue_id == sub_issue_id for sub in self._sub_issues
         ):
@@ -243,15 +382,6 @@ class Issue:
             status=IssueStatus.NEW,
         )
         self._sub_issues.append(sub_issue)
-        self._pending_events.append(
-            SubIssueAdded(
-                occurred_at=added_at,
-                issue_id=self._issue_id,
-                sub_issue_id=sub_issue_id,
-                parent_id=parent_id,
-                position=sub_issue.position,
-            )
-        )
         return sub_issue
 
     def pull_events(self) -> tuple[DomainEvent, ...]:
@@ -281,6 +411,20 @@ def _check_similar_issue_flags(issue_id: str, flags: tuple[SimilarIssueFlag, ...
                 issue_id=issue_id, similar_issue_id=flag.similar_issue_id
             )
         seen.add(flag.similar_issue_id)
+
+
+def _check_sub_issue_candidates(
+    issue_id: str, candidates: list[SubIssueCandidate], sub_issues: list[SubIssue]
+) -> None:
+    sub_issue_ids = {sub.sub_issue_id for sub in sub_issues}
+    number_counts = Counter(candidate.number for candidate in candidates)
+    for candidate in candidates:
+        is_lost = (
+            candidate.accepted_sub_issue_id is not None
+            and candidate.accepted_sub_issue_id not in sub_issue_ids
+        )
+        if candidate.number < 1 or number_counts[candidate.number] > 1 or is_lost:
+            raise InvalidSubIssueCandidateError(issue_id=issue_id, number=candidate.number)
 
 
 def _check_sub_issue_tree(issue_id: str, sub_issues: list[SubIssue]) -> None:

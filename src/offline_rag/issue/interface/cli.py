@@ -14,8 +14,17 @@ from typing import Any, TextIO
 import structlog
 
 from offline_rag.bootstrap import IssueWiring, build_issue, configure_logging
-from offline_rag.issue.application.commands import AddSubIssue, RaiseIssue
-from offline_rag.issue.interface.response_bodies import issue_body, issue_summary_body
+from offline_rag.issue.application.commands import (
+    AcceptSubIssueCandidates,
+    AddSubIssue,
+    DecomposeIssue,
+    RaiseIssue,
+)
+from offline_rag.issue.interface.response_bodies import (
+    candidate_body,
+    issue_body,
+    issue_summary_body,
+)
 
 # The Problem Details helpers depend only on the shared error categories, so every
 # context's entry points share them.
@@ -59,6 +68,26 @@ def build_parser() -> argparse.ArgumentParser:
     add_sub_issue.add_argument("--description", required=True)
     _add_metadata_arguments(add_sub_issue)
 
+    decompose = commands.add_parser(
+        "decompose",
+        help="Ask the local LLM to suggest SubIssues, citing the KnowledgeItems given. "
+        "The suggestions wait as numbered candidates; nothing is added yet.",
+    )
+    decompose.add_argument("issue_id", help="The Issue to split.")
+    decompose.add_argument(
+        "--knowledge-item",
+        action="append",
+        required=True,
+        help="Id of a KnowledgeItem the LLM reads and cites. Repeat for more items.",
+    )
+
+    accept = commands.add_parser(
+        "accept-sub-issue-candidates",
+        help="Turn chosen candidates into SubIssues of the Issue, in the order given.",
+    )
+    accept.add_argument("issue_id", help="The Issue the candidates belong to.")
+    accept.add_argument("numbers", type=int, nargs="+", help="Candidate numbers, such as 1 3.")
+
     show = commands.add_parser("show", help="Print an Issue with its SubIssue tree.")
     show.add_argument("issue_id", help="The id that `issue raise` printed.")
 
@@ -77,6 +106,8 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
     commands: dict[str, Command] = {
         "raise": _raise_issue,
         "add-sub-issue": _add_sub_issue,
+        "decompose": _decompose_issue,
+        "accept-sub-issue-candidates": _accept_sub_issue_candidates,
         "show": _show_issue,
         "list": _list_issues,
     }
@@ -148,6 +179,30 @@ def _add_sub_issue(arguments: argparse.Namespace, issue: IssueWiring) -> dict[st
         )
     )
     return {"added_sub_issue_id": added.sub_issue_id} | issue_body(split)
+
+
+def _decompose_issue(arguments: argparse.Namespace, issue: IssueWiring) -> dict[str, Any]:
+    result = issue.decompose_issue_handler.decompose(
+        DecomposeIssue(
+            issue_id=arguments.issue_id,
+            knowledge_item_ids=tuple(arguments.knowledge_item),
+        )
+    )
+    return {
+        "issue_id": result.issue.issue_id,
+        "candidates": [candidate_body(candidate) for candidate in result.candidates],
+        "missing_information": result.missing_information,
+        "dropped_citation_count": result.dropped_citation_count,
+    }
+
+
+def _accept_sub_issue_candidates(
+    arguments: argparse.Namespace, issue: IssueWiring
+) -> dict[str, Any]:
+    accepted = issue.accept_sub_issue_candidates_handler.accept(
+        AcceptSubIssueCandidates(issue_id=arguments.issue_id, numbers=tuple(arguments.numbers))
+    )
+    return issue_body(accepted)
 
 
 def _show_issue(arguments: argparse.Namespace, issue: IssueWiring) -> dict[str, Any]:
