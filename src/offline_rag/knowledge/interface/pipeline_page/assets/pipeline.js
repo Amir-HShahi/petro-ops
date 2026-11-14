@@ -245,7 +245,12 @@ function fillRow(entry) {
   if (isCompleted) title.type = "button";
   const headline = element("div", "ingestion-headline");
   headline.append(title, element("span", "pill", ingestion.document_format.toUpperCase()));
-  if (isCompleted) headline.append(actionButton("Chunks", () => openChunks(ingestion)));
+  if (isCompleted) {
+    headline.append(
+      actionButton("Chunks", () => openChunks(ingestion)),
+      actionButton("Versions", () => showItem(ingestion.item_id)),
+    );
+  }
 
   const meta = element("p", "ingestion-meta");
   meta.append(element(
@@ -379,6 +384,7 @@ function fillCard(entry) {
     actions.append(
       actionButton("Chunks", () => openChunks(ingestion)),
       actionButton("Blocks", () => openBlocks(ingestion)),
+      actionButton("Versions", () => showItem(ingestion.item_id)),
     );
     el.append(actions);
   }
@@ -619,15 +625,15 @@ function flagRow(flag) {
   return row;
 }
 
-async function openBlocks(ingestion) {
-  if (ingestion.status !== "completed") return;
+// `target` is anything with item_id, version_tag and source_file_name: an ingestion or a version.
+async function openBlocks(target) {
   const dialog = document.getElementById("blocks-dialog");
   const list = document.getElementById("blocks-list");
   const flags = document.getElementById("blocks-flags");
   const flagsSection = document.getElementById("blocks-flags-section");
   const summary = document.getElementById("blocks-summary");
   const titleIcon = document.getElementById("blocks-icon");
-  document.getElementById("blocks-title").textContent = ingestion.source_file_name;
+  document.getElementById("blocks-title").textContent = `${target.source_file_name} · ${target.version_tag}`;
   titleIcon.replaceChildren(icon(STATUS_VIEWS.completed.icon));
   summary.textContent = "Loading…";
   list.replaceChildren();
@@ -635,19 +641,20 @@ async function openBlocks(ingestion) {
   flagsSection.hidden = true;
   dialog.showModal();
   try {
-    const status = await getJson(`/knowledge-ingestions/${encodeURIComponent(ingestion.ingestion_id)}`);
-    flags.replaceChildren(...status.duplicate_flags.map(flagRow));
-    flagsSection.hidden = status.duplicate_flags.length === 0;
+    const item = await getJson(`/knowledge-items/${encodeURIComponent(target.item_id)}`);
+    const version = item.versions.find((candidate) => candidate.version_tag === target.version_tag);
+    flags.replaceChildren(...version.duplicate_flags.map(flagRow));
+    flagsSection.hidden = version.duplicate_flags.length === 0;
     const body = await getJson(
-      `/knowledge-items/${encodeURIComponent(ingestion.item_id)}/versions/` +
-      `${encodeURIComponent(ingestion.version_tag)}/content?limit=${MAX_BLOCKS}`,
+      `/knowledge-items/${encodeURIComponent(target.item_id)}/versions/` +
+      `${encodeURIComponent(target.version_tag)}/content?limit=${MAX_BLOCKS}`,
     );
     const extraction = body.extraction;
     const pages = extraction.page_count === null ? "" : `${extraction.page_count} pages · `;
     summary.textContent =
       `${extraction.document_format.toUpperCase()} · ${pages}${extraction.block_count} blocks · ` +
       `${extraction.table_count} tables · ${extraction.lvm_block_count} read by the LVM · ` +
-      `${extraction.blocks_for_review} for review · ${status.chunk_count} chunks`;
+      `${extraction.blocks_for_review} for review · ${version.chunk_count} chunks`;
     list.replaceChildren(...body.blocks.map((block) => {
       const item = element("li", `block ${block.kind}${block.needs_human_review ? " needs-review" : ""}`);
       const head = element("div", "block-head");
@@ -679,20 +686,19 @@ function chunkLocation(chunk) {
   return [pages, headings].filter(Boolean).join(" · ") || "Before the first heading";
 }
 
-async function openChunks(ingestion) {
-  if (ingestion.status !== "completed") return;
+async function openChunks(target) {
   const dialog = document.getElementById("chunks-dialog");
   const list = document.getElementById("chunks-list");
   const summary = document.getElementById("chunks-summary");
-  document.getElementById("chunks-title").textContent = ingestion.source_file_name;
+  document.getElementById("chunks-title").textContent = `${target.source_file_name} · ${target.version_tag}`;
   document.getElementById("chunks-icon").replaceChildren(icon(STATUS_VIEWS.completed.icon));
   summary.textContent = "Loading…";
   list.replaceChildren();
   dialog.showModal();
   try {
     const body = await getJson(
-      `/knowledge-items/${encodeURIComponent(ingestion.item_id)}/versions/` +
-      `${encodeURIComponent(ingestion.version_tag)}/chunks?limit=${MAX_CHUNKS}`,
+      `/knowledge-items/${encodeURIComponent(target.item_id)}/versions/` +
+      `${encodeURIComponent(target.version_tag)}/chunks?limit=${MAX_CHUNKS}`,
     );
     const retrieval = body.is_retrievable
       ? "retrievable"
@@ -729,8 +735,28 @@ for (const name of ["blocks", "chunks"]) {
   });
 }
 
+const VIEWS = ["pipeline", "knowledge", "hierarchy"];
+
+function showView(name) {
+  const view = VIEWS.includes(name) ? name : "pipeline";
+  for (const page of document.querySelectorAll("[data-view]")) page.hidden = page.dataset.view !== view;
+  for (const tab of document.querySelectorAll("[data-view-tab]")) {
+    tab.setAttribute("aria-selected", String(tab.dataset.viewTab === view));
+  }
+  document.dispatchEvent(new CustomEvent("viewchange", { detail: view }));
+}
+
+function setUpViews() {
+  for (const tab of document.querySelectorAll("[data-view-tab]")) {
+    tab.addEventListener("click", () => { location.hash = tab.dataset.viewTab; });
+  }
+  window.addEventListener("hashchange", () => showView(location.hash.slice(1)));
+  showView(location.hash.slice(1));
+}
+
 loadNodes();
 setUpUpload();
 setUpFilters();
 setUpPresent();
+setUpViews();
 poll();

@@ -7,18 +7,22 @@ and queries as the CLI and return the same bodies. Errors are Problem Details.
 import re
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Annotated, Any
 
 import structlog
 import uvicorn
-from fastapi import FastAPI, File, Form, Query, Request, Response, UploadFile
+from fastapi import APIRouter, FastAPI, File, Form, Query, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from offline_rag.bootstrap import build_knowledge, configure_logging
+from offline_rag.bootstrap import (
+    build_knowledge,
+    build_organization_router,
+    configure_logging,
+)
 from offline_rag.knowledge.application.commands import (
     PublishKnowledgeVersion,
     ReingestKnowledgeItem,
@@ -48,6 +52,7 @@ from offline_rag.knowledge.interface.response_bodies import (
     chunks_body,
     content_body,
     ingestion_status_body,
+    item_body,
     nodes_body,
     queue_depths_body,
     receipt_body,
@@ -78,6 +83,7 @@ def create_app(
     queries: KnowledgeIngestionQueries,
     max_file_mb: int,
     min_page_text_chars: int,
+    extra_routers: Sequence[APIRouter] = (),
 ) -> FastAPI:
     """Return the API over the given use cases and queries.
 
@@ -89,6 +95,7 @@ def create_app(
         max_file_mb: The largest upload accepted, in megabytes. Reading stops just
             past it, so a larger file is refused without being held in memory.
         min_page_text_chars: The threshold below which a PDF page counts as having no text.
+        extra_routers: Routes of other contexts to serve beside these, built by the caller.
     """
     app = FastAPI(title="Knowledge ingestion API", docs_url="/docs", redoc_url=None)
     app.mount(
@@ -227,6 +234,11 @@ def create_app(
         """Return the status of an ingestion."""
         return ingestion_status_body(queries.get_ingestion(ingestion_id))
 
+    @app.get("/knowledge-items/{item_id}")
+    def show_item(item_id: str) -> dict[str, Any]:
+        """Return an item with its versions, their chunk counts and duplicate flags."""
+        return item_body(queries.get_item(item_id))
+
     @app.get("/knowledge-items/{item_id}/versions/{version_tag}/content")
     def show_content(
         item_id: str,
@@ -285,6 +297,8 @@ def create_app(
         response.headers["Location"] = f"/knowledge-ingestions/{receipt.ingestion_id}"
         return receipt_body(receipt)
 
+    for router in extra_routers:
+        app.include_router(router)
     return app
 
 
@@ -299,6 +313,7 @@ def run_api(settings: Settings) -> None:
         queries=knowledge.queries,
         max_file_mb=settings.max_file_mb,
         min_page_text_chars=settings.min_page_text_chars,
+        extra_routers=[build_organization_router(knowledge.organization)],
     )
     log.info("api_started", host=settings.api_host, port=settings.api_port)
     try:

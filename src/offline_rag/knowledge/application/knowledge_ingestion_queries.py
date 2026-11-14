@@ -19,6 +19,8 @@ from offline_rag.knowledge.domain.duplicate_detection import DuplicateFlag
 from offline_rag.knowledge.domain.extracted_content import ExtractedContent
 from offline_rag.knowledge.domain.knowledge_chunk import KnowledgeChunk
 from offline_rag.knowledge.domain.knowledge_ingestion import KnowledgeIngestion
+from offline_rag.knowledge.domain.knowledge_item import KnowledgeItem
+from offline_rag.knowledge.domain.knowledge_version import KnowledgeVersion
 from offline_rag.knowledge.domain.version_tag import VersionTag
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
 
@@ -54,6 +56,37 @@ class VersionChunks:
     def is_retrievable(self) -> bool:
         """Whether the chunks may be retrieved: only those of the active version (spec §7.6)."""
         return self.version_tag == self.active_version_tag
+
+
+@dataclass(frozen=True, kw_only=True)
+class KnowledgeVersionView:
+    """One version of an item with what the pipeline made of it.
+
+    Attributes:
+        version: The version as published.
+        is_active: Whether it is the item's active version, the only one whose chunks
+            retrieval may use (spec §7.6).
+        chunk_count: Chunks stored for it; 0 until chunking has run.
+        duplicate_flags: The flags raised for it, read-only.
+    """
+
+    version: KnowledgeVersion
+    is_active: bool
+    chunk_count: int
+    duplicate_flags: list[DuplicateFlag]
+
+
+@dataclass(frozen=True, kw_only=True)
+class KnowledgeItemView:
+    """An item with its version history, oldest version first.
+
+    Attributes:
+        item: The KnowledgeItem.
+        versions: One view per version.
+    """
+
+    item: KnowledgeItem
+    versions: list[KnowledgeVersionView]
 
 
 class KnowledgeIngestionQueries:
@@ -93,6 +126,30 @@ class KnowledgeIngestionQueries:
             duplicate_flags=self._duplicate_flag_repository.list_by_version(
                 ingestion.item_id, ingestion.version_tag
             ),
+        )
+
+    def get_item(self, item_id: str) -> KnowledgeItemView:
+        """Return an item with its version history, chunk counts and duplicate flags.
+
+        Raises:
+            KnowledgeItemNotFoundError: The item does not exist.
+        """
+        item = self._repository.get_by_id(item_id)
+        return KnowledgeItemView(
+            item=item,
+            versions=[
+                KnowledgeVersionView(
+                    version=version,
+                    is_active=version.version_tag == item.active_version.version_tag,
+                    chunk_count=len(
+                        self._chunk_repository.list_by_version(item.item_id, version.version_tag)
+                    ),
+                    duplicate_flags=self._duplicate_flag_repository.list_by_version(
+                        item.item_id, version.version_tag
+                    ),
+                )
+                for version in item.versions
+            ],
         )
 
     def get_chunks(self, item_id: str, version_tag: VersionTag | None = None) -> VersionChunks:
