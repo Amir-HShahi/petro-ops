@@ -82,6 +82,10 @@ Add a row in the same PR that adds the code.
 | `ISSUE_SUB_ISSUE_PARENT_NOT_FOUND` | Domain | A SubIssue's parent is neither its Issue nor one of that Issue's SubIssues. | Split the Issue itself or one of its existing SubIssues. |
 | `ISSUE_SUB_ISSUE_CYCLE` | Domain | Stored SubIssues are each other's parents, so they do not form a tree. `details.sub_issue_ids` lists them. | Fix the parents of those SubIssues so each one leads up to the Issue. |
 | `ISSUE_INVALID_SUB_ISSUE_POSITION` | Domain | The SubIssues under one parent are not numbered 1, 2, 3 and on. | Renumber the SubIssues under that parent without gaps. |
+| `ISSUE_NOT_FOUND` | Not found | No Issue has the requested id. | Check the id that `issue raise` printed, or list the Node's Issues with `issue list`. |
+| `ISSUE_OWNER_NODE_NOT_FOUND` | Not found | An Issue was raised for a Node that is not registered in Organizational Hierarchy. | Register the Node first, for example with `uv run organization import-nodes`. |
+| `ISSUE_STORAGE_FAILED` | Infrastructure | The local database of Issues cannot be read or written. | Check that Postgres is running and the migrations have run, then try again. |
+| `ISSUE_NODE_REGISTRY_UNAVAILABLE` | Infrastructure | The registered Nodes of Organizational Hierarchy cannot be read, so the owner of a new Issue cannot be checked. | Check that Postgres is running and `DATABASE_URL` points to it. |
 | `EVALUATION_INVALID_JUDGE_THRESHOLD` | Domain | A judge threshold is not a whole number of points from 1 to 20. | Give a score from 1 to 20, such as 18. |
 | `KNOWLEDGE_EMPTY_FILE` | Domain | A submitted file has no content. | Submit the file again with its content. |
 | `KNOWLEDGE_UNSUPPORTED_FORMAT` | Domain | A submitted file is not DOC, DOCX or PDF. The format is read from the file content, not its name. | Convert the file to DOC, DOCX or PDF. |

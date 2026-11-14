@@ -69,6 +69,16 @@ uv run organization define-transfer-rule 1 --detail-level managerial --required-
 
 `docker/organization-demo.sh` runs the whole flow step by step: it starts Postgres, creates the tables, imports the chart, registers a Node, shows the hierarchy rules refusing four bad Nodes, defines the transfer rules of Layers 0 to 3 and prints the chart. Add `--reset` to start from an empty chart.
 
+## Issues
+
+An Issue is a problem a Node works on, split into a tree of SubIssues (spec §12). An Issue can only be raised for a registered Node, so import the Nodes first.
+
+```bash
+uv run issue raise --node platform_sp12 --title "Riser R-3 splash zone corrosion" --description "Gas export riser R-3 is losing wall in the splash zone." --domain "asset integrity" --tag riser
+uv run issue show <issue_id>
+uv run issue list --node platform_sp12
+```
+
 ## Checks
 
 ```bash

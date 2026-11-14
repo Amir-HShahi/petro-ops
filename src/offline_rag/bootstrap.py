@@ -8,6 +8,15 @@ import pika
 import structlog
 from fastapi import APIRouter
 
+from offline_rag.issue.application.issue_queries import IssueQueries
+from offline_rag.issue.application.raise_issue import RaiseIssueHandler
+from offline_rag.issue.infrastructure.organization_node_directory import (
+    OrganizationNodeDirectory as IssueNodeDirectory,
+)
+from offline_rag.issue.infrastructure.postgres_database import (
+    PostgresDatabase as IssueDatabase,
+)
+from offline_rag.issue.infrastructure.postgres_issue_repository import PostgresIssueRepository
 from offline_rag.knowledge.application.chunk_knowledge_content import (
     ChunkingSizes,
     ChunkKnowledgeContentHandler,
@@ -118,6 +127,21 @@ class OrganizationWiring:
     def close(self) -> None:
         """Close the database pool."""
         self.database.close()
+
+
+@dataclass(frozen=True, kw_only=True)
+class IssueWiring:
+    """The Issue Management use cases and queries, and the connections they share."""
+
+    raise_issue_handler: RaiseIssueHandler
+    queries: IssueQueries
+    database: IssueDatabase
+    organization: OrganizationWiring
+
+    def close(self) -> None:
+        """Close the database pools."""
+        self.database.close()
+        self.organization.close()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -361,6 +385,30 @@ def build_organization(settings: Settings) -> OrganizationWiring:
             layer_repository=layer_repository, node_repository=node_repository
         ),
         database=database,
+    )
+
+
+def build_issue(settings: Settings) -> IssueWiring:
+    """Return Issue Management on Postgres (ADR 0004)."""
+    database = IssueDatabase(
+        settings.database_url,
+        pool_size=settings.database_pool_size,
+        connect_timeout_s=settings.database_connect_timeout_s,
+    )
+    issue_repository = PostgresIssueRepository(database)
+    # An Issue's owner Node is checked against Organizational Hierarchy (spec §12).
+    organization = build_organization(settings)
+    return IssueWiring(
+        raise_issue_handler=RaiseIssueHandler(
+            issue_repository=issue_repository,
+            node_directory=IssueNodeDirectory(organization.node_queries),
+            clock=SystemClock(),
+            id_generator=UuidIdGenerator(),
+            event_publisher=InProcessEventPublisher(),
+        ),
+        queries=IssueQueries(issue_repository=issue_repository),
+        database=database,
+        organization=organization,
     )
 
 
