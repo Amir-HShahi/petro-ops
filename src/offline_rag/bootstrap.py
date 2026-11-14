@@ -12,9 +12,17 @@ from offline_rag.issue.application.accept_sub_issue_candidates import (
     AcceptSubIssueCandidatesHandler,
 )
 from offline_rag.issue.application.add_sub_issue import AddSubIssueHandler
+from offline_rag.issue.application.add_sub_issue_dependency import AddSubIssueDependencyHandler
+from offline_rag.issue.application.change_issue_status import ChangeIssueStatusHandler
 from offline_rag.issue.application.decompose_issue import DecomposeIssueHandler
 from offline_rag.issue.application.issue_queries import IssueQueries
+from offline_rag.issue.application.move_sub_issue import MoveSubIssueHandler
 from offline_rag.issue.application.raise_issue import RaiseIssueHandler
+from offline_rag.issue.application.remove_sub_issue_dependency import (
+    RemoveSubIssueDependencyHandler,
+)
+from offline_rag.issue.application.resolve_issue import ResolveIssueHandler
+from offline_rag.issue.application.set_issue_priority import SetIssuePriorityHandler
 from offline_rag.issue.domain.similar_issue import SimilarIssueDetector
 from offline_rag.issue.infrastructure.knowledge_management_reader import (
     KnowledgeManagementReader,
@@ -178,6 +186,12 @@ class IssueWiring:
     add_sub_issue_handler: AddSubIssueHandler
     decompose_issue_handler: DecomposeIssueHandler
     accept_sub_issue_candidates_handler: AcceptSubIssueCandidatesHandler
+    set_priority_handler: SetIssuePriorityHandler
+    move_sub_issue_handler: MoveSubIssueHandler
+    add_dependency_handler: AddSubIssueDependencyHandler
+    remove_dependency_handler: RemoveSubIssueDependencyHandler
+    change_status_handler: ChangeIssueStatusHandler
+    resolve_issue_handler: ResolveIssueHandler
     queries: IssueQueries
     database: IssueDatabase
     knowledge: KnowledgeWiring
@@ -453,6 +467,24 @@ def build_issue(settings: Settings) -> IssueWiring:
             clock=clock,
             id_generator=id_generator,
             event_publisher=event_publisher,
+        ),
+        set_priority_handler=SetIssuePriorityHandler(
+            issue_repository=issue_repository, clock=clock, event_publisher=event_publisher
+        ),
+        move_sub_issue_handler=MoveSubIssueHandler(
+            issue_repository=issue_repository, clock=clock, event_publisher=event_publisher
+        ),
+        add_dependency_handler=AddSubIssueDependencyHandler(
+            issue_repository=issue_repository, clock=clock, event_publisher=event_publisher
+        ),
+        remove_dependency_handler=RemoveSubIssueDependencyHandler(
+            issue_repository=issue_repository, clock=clock, event_publisher=event_publisher
+        ),
+        change_status_handler=ChangeIssueStatusHandler(
+            issue_repository=issue_repository, clock=clock, event_publisher=event_publisher
+        ),
+        resolve_issue_handler=ResolveIssueHandler(
+            issue_repository=issue_repository, clock=clock, event_publisher=event_publisher
         ),
         queries=IssueQueries(issue_repository=issue_repository),
         database=database,

@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from offline_rag.issue.domain.issue_priority import IssuePriority
+from offline_rag.issue.domain.issue_status import IssueStatus
 from offline_rag.shared_kernel.metadata_record import MetadataRecord
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
 
@@ -67,3 +69,89 @@ class AcceptSubIssueCandidates:
 
     issue_id: str
     numbers: tuple[int, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class SetIssuePriority:
+    """Say how urgent an Issue is (spec §12.3, §14.2).
+
+    Attributes:
+        issue_id: The Issue.
+        priority: Its new priority.
+    """
+
+    issue_id: str
+    priority: IssuePriority
+
+
+@dataclass(frozen=True, kw_only=True)
+class MoveSubIssue:
+    """Move a SubIssue to another place among its siblings (spec §12.2, §12.3).
+
+    Attributes:
+        issue_id: The Issue the SubIssue belongs to.
+        sub_issue_id: The SubIssue to move.
+        position: Its new place, from 1.
+    """
+
+    issue_id: str
+    sub_issue_id: str
+    position: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class AddSubIssueDependency:
+    """Make a SubIssue wait for another SubIssue of the same Issue (spec §12.3).
+
+    Attributes:
+        issue_id: The Issue both SubIssues belong to.
+        sub_issue_id: The SubIssue that waits.
+        depends_on_sub_issue_id: The SubIssue it waits for.
+    """
+
+    issue_id: str
+    sub_issue_id: str
+    depends_on_sub_issue_id: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class RemoveSubIssueDependency:
+    """Stop a SubIssue waiting for another SubIssue of the same Issue.
+
+    Attributes:
+        issue_id: The Issue both SubIssues belong to.
+        sub_issue_id: The SubIssue that waits.
+        depends_on_sub_issue_id: The SubIssue it no longer waits for.
+    """
+
+    issue_id: str
+    sub_issue_id: str
+    depends_on_sub_issue_id: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class ChangeIssueStatus:
+    """Move an Issue, or one of its SubIssues, to another status (spec §14.1).
+
+    Attributes:
+        issue_id: The Issue.
+        status: The new status.
+        sub_issue_id: The SubIssue to change, or None for the Issue itself.
+    """
+
+    issue_id: str
+    status: IssueStatus
+    sub_issue_id: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ResolveIssue:
+    """Mark an Issue resolved, with how it was solved (spec §12.5, §14.1).
+
+    Attributes:
+        issue_id: The Issue.
+        resolution_summary: How the problem was solved.
+    """
+
+    issue_id: str
+    resolution_summary: str

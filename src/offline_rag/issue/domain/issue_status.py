@@ -21,3 +21,7 @@ class IssueStatus(StrEnum):
     RESOLVED = "resolved"
     UNRESOLVED = "unresolved"
     ARCHIVED = "archived"
+
+
+CLOSED_STATUSES = frozenset({IssueStatus.RESOLVED, IssueStatus.UNRESOLVED, IssueStatus.ARCHIVED})
+"""Statuses in which the work on an Issue or a SubIssue is over."""

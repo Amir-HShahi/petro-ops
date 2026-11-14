@@ -94,6 +94,14 @@ Add a row in the same PR that adds the code.
 | `ISSUE_MODEL_UNAVAILABLE` | Infrastructure | The local LLM did not answer a decomposition: Ollama is not running, the model is not pulled, or it timed out. | Start Ollama, pull the model in `models/manifest.yaml`, then try again. |
 | `ISSUE_MODEL_REGISTRY_UNAVAILABLE` | Infrastructure | The `issue_decomposition` prompt or its model is missing from `prompts/registry.yaml` or `models/manifest.yaml`. | Restore the registry entries and the prompt file. |
 | `ISSUE_DECOMPOSITION_ANSWER_INVALID` | Infrastructure | The LLM's answers to a decomposition were not the JSON the prompt asks for, on every attempt. | Try again, or name other KnowledgeItems. |
+| `ISSUE_SUB_ISSUE_NOT_FOUND` | Not found | An Issue has no SubIssue with the id given, or a stored SubIssue waits for one that is not there. | Check the ids with `issue show`. |
+| `ISSUE_SUB_ISSUE_POSITION_OUT_OF_RANGE` | Domain | A SubIssue was moved to a place its siblings do not have. `details.sibling_count` gives the number of places. | Give a place from 1 to the number of siblings. |
+| `ISSUE_SUB_ISSUE_DEPENDENCY_CYCLE` | Domain | SubIssues would wait for each other, directly or through others. `details.sub_issue_ids` lists them. | Remove one of the dependencies first, or leave this one out. |
+| `ISSUE_SUB_ISSUE_DEPENDENCY_NOT_FOUND` | Not found | A SubIssue does not wait for the SubIssue named. | Check its `depends_on` with `issue show`. |
+| `ISSUE_ARCHIVED_IS_FINAL` | Domain | An archived Issue or SubIssue was given another status. | Raise a new Issue, or add a new SubIssue, instead. |
+| `ISSUE_RESOLVE_REQUIRED` | Domain | An Issue was set to resolved with `change-status`. | Use `issue resolve` with a resolution summary. |
+| `ISSUE_HAS_OPEN_SUB_ISSUES` | Domain | An Issue was resolved while some SubIssues are still open. `details.sub_issue_ids` lists them. | Set each of them to resolved, unresolved or archived first. |
+| `ISSUE_CLOSED` | Domain | A resolved or archived Issue was changed: its SubIssues, candidates, dependencies or priority. | Change the Issue's status first to reopen it. |
 | `ISSUE_NOT_FOUND` | Not found | No Issue has the requested id. | Check the id that `issue raise` printed, or list the Node's Issues with `issue list`. |
 | `ISSUE_OWNER_NODE_NOT_FOUND` | Not found | An Issue was raised for a Node that is not registered in Organizational Hierarchy. | Register the Node first, for example with `uv run organization import-nodes`. |
 | `ISSUE_STORAGE_FAILED` | Infrastructure | The local database of Issues cannot be read or written, or two SubIssues were added under the same parent at the same moment. | Check that Postgres is running and the migrations have run, then try again. |

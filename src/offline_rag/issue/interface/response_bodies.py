@@ -16,6 +16,8 @@ def issue_body(issue: Issue) -> dict[str, Any]:
         "title": issue.title,
         "description": issue.description,
         "status": issue.status.value,
+        "priority": issue.priority.value if issue.priority else None,
+        "resolution_summary": issue.resolution_summary,
         "raised_at": issue.raised_at.isoformat(),
         "metadata": _metadata_body(issue.metadata),
         "similar_issues": [
@@ -46,6 +48,7 @@ def issue_summary_body(issue: Issue) -> dict[str, Any]:
         "issue_id": issue.issue_id,
         "title": issue.title,
         "status": issue.status.value,
+        "priority": issue.priority.value if issue.priority else None,
         "raised_at": issue.raised_at.isoformat(),
         "sub_issue_count": len(issue.sub_issues),
         "similar_issue_count": len(issue.similar_issue_flags),
@@ -60,6 +63,7 @@ def _children_body(issue: Issue, parent_id: str) -> list[dict[str, Any]]:
             "title": sub.title,
             "description": sub.description,
             "status": sub.status.value,
+            "depends_on": list(sub.depends_on),
             "metadata": _metadata_body(sub.metadata),
             "sub_issues": _children_body(issue, sub.sub_issue_id),
         }

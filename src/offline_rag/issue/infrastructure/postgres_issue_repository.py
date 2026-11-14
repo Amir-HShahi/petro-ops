@@ -9,6 +9,7 @@ from psycopg.types.json import Jsonb
 
 from offline_rag.issue.application.errors import IssueNotFoundError
 from offline_rag.issue.domain.issue import Issue
+from offline_rag.issue.domain.issue_priority import IssuePriority
 from offline_rag.issue.domain.issue_status import IssueStatus
 from offline_rag.issue.domain.similar_issue import SimilarIssueFlag, SimilarIssueKind
 from offline_rag.issue.domain.sub_issue import SubIssue
@@ -18,8 +19,10 @@ from offline_rag.shared_kernel.metadata_record import MetadataRecord
 from offline_rag.shared_kernel.node_identifier import NodeIdentifier
 
 _INSERT_ISSUE = """
-INSERT INTO issue (issue_id, owner_node_id, title, description, metadata, status, raised_at)
-VALUES (%s, %s, %s, %s, %s, %s, %s)
+INSERT INTO issue
+    (issue_id, owner_node_id, title, description, metadata, status, raised_at, priority,
+     resolution_summary)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 _INSERT_SUB_ISSUE = """
@@ -29,7 +32,14 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 _UPDATE_ISSUE = """
-UPDATE issue SET title = %s, description = %s, metadata = %s, status = %s WHERE issue_id = %s
+UPDATE issue SET title = %s, description = %s, metadata = %s, status = %s, priority = %s,
+    resolution_summary = %s
+WHERE issue_id = %s
+"""
+
+_INSERT_SUB_ISSUE_DEPENDENCY = """
+INSERT INTO sub_issue_dependency (issue_id, sub_issue_id, depends_on_sub_issue_id)
+VALUES (%s, %s, %s)
 """
 
 # A SubIssue is never removed, so saving writes each one: new rows are added and
@@ -69,8 +79,9 @@ _TUPLE_METADATA_FIELDS = {
 
 
 class PostgresIssueRepository:
-    """Stores each Issue as one row of `issue`, with its SubIssues in `sub_issue` and its
-    similar-Issue flags in `similar_issue_flag`."""
+    """Stores each Issue as one row of `issue`, with its SubIssues in `sub_issue` and
+    `sub_issue_dependency`, its similar-Issue flags in `similar_issue_flag` and its
+    candidates in `sub_issue_candidate`."""
 
     def __init__(self, database: PostgresDatabase) -> None:
         self._database = database
@@ -140,10 +151,13 @@ class PostgresIssueRepository:
                     Jsonb(asdict(issue.metadata)),
                     issue.status.value,
                     issue.raised_at,
+                    issue.priority.value if issue.priority else None,
+                    issue.resolution_summary,
                 ),
             )
             for sub_issue in issue.sub_issues:
                 connection.execute(_INSERT_SUB_ISSUE, _sub_issue_values(issue, sub_issue))
+            _insert_dependencies(connection, issue)
             for flag in issue.similar_issue_flags:
                 connection.execute(
                     _INSERT_SIMILAR_ISSUE_FLAG,
@@ -155,8 +169,8 @@ class PostgresIssueRepository:
         """Store the changes of a stored Issue, its SubIssues and candidates in one transaction.
 
         Its similar-Issue flags never change after it is raised, so they are not written.
-        Its candidates are written again as a whole, since new suggestions replace the
-        waiting ones.
+        Its dependencies and candidates are written again as a whole, since both can
+        lose entries.
 
         Raises:
             IssueNotFoundError: No Issue has this id.
@@ -171,6 +185,8 @@ class PostgresIssueRepository:
                     issue.description,
                     Jsonb(asdict(issue.metadata)),
                     issue.status.value,
+                    issue.priority.value if issue.priority else None,
+                    issue.resolution_summary,
                     issue.issue_id,
                 ),
             )
@@ -179,9 +195,21 @@ class PostgresIssueRepository:
             for sub_issue in issue.sub_issues:
                 connection.execute(_UPSERT_SUB_ISSUE, _sub_issue_values(issue, sub_issue))
             connection.execute(
+                "DELETE FROM sub_issue_dependency WHERE issue_id = %s", (issue.issue_id,)
+            )
+            _insert_dependencies(connection, issue)
+            connection.execute(
                 "DELETE FROM sub_issue_candidate WHERE issue_id = %s", (issue.issue_id,)
             )
             _insert_candidates(connection, issue)
+
+
+def _insert_dependencies(connection: Connection[DictRow], issue: Issue) -> None:
+    for sub_issue in issue.sub_issues:
+        for depends_on in sub_issue.depends_on:
+            connection.execute(
+                _INSERT_SUB_ISSUE_DEPENDENCY, (issue.issue_id, sub_issue.sub_issue_id, depends_on)
+            )
 
 
 def _insert_candidates(connection: Connection[DictRow], issue: Issue) -> None:
@@ -243,6 +271,14 @@ def _sub_issues_by_issue(
     rows = connection.execute(
         "SELECT * FROM sub_issue WHERE issue_id = ANY(%s)", (issue_ids,)
     ).fetchall()
+    depends_on: dict[tuple[str, str], list[str]] = {}
+    for dependency in connection.execute(
+        "SELECT * FROM sub_issue_dependency WHERE issue_id = ANY(%s)"
+        " ORDER BY depends_on_sub_issue_id",
+        (issue_ids,),
+    ).fetchall():
+        key = (dependency["issue_id"], dependency["sub_issue_id"])
+        depends_on.setdefault(key, []).append(dependency["depends_on_sub_issue_id"])
     sub_issues: dict[str, list[SubIssue]] = {}
     for row in rows:
         sub_issues.setdefault(row["issue_id"], []).append(
@@ -254,6 +290,7 @@ def _sub_issues_by_issue(
                 description=row["description"],
                 metadata=_metadata_from_json(row["metadata"]),
                 status=IssueStatus(row["status"]),
+                depends_on=tuple(depends_on.get((row["issue_id"], row["sub_issue_id"]), [])),
             )
         )
     return sub_issues
@@ -293,6 +330,8 @@ def _issue_from_row(
         sub_issues=sub_issues,
         similar_issue_flags=flags,
         sub_issue_candidates=candidates,
+        priority=IssuePriority(row["priority"]) if row["priority"] else None,
+        resolution_summary=row["resolution_summary"],
     )
 
 

@@ -90,6 +90,18 @@ uv run issue decompose <issue_id> --knowledge-item <item_id>
 uv run issue accept-sub-issue-candidates <issue_id> 1 3
 ```
 
+An Issue then gets a priority (`low`, `medium`, `high` or `critical`), its SubIssues an order and the SubIssues they wait for, and both a status from spec §14.1. Any status may follow any other, except that nothing leaves `archived`. The Issue itself is resolved only with `resolve`, once every SubIssue is resolved, unresolved or archived; it then stays as it is until its status changes again.
+
+```bash
+uv run issue set-priority <issue_id> high
+uv run issue move-sub-issue <issue_id> <sub_issue_id> --position 1
+uv run issue add-dependency <issue_id> <sub_issue_id> --on <other_sub_issue_id>
+uv run issue change-status <issue_id> resolved --sub-issue <sub_issue_id>
+uv run issue resolve <issue_id> --summary "Riser section replaced in March 2027."
+```
+
+`docker/issue-demo.sh` runs the whole flow step by step.
+
 ## Checks
 
 ```bash

@@ -240,6 +240,7 @@ def test_cli_shows_and_lists_the_issue_when_it_was_raised(
             "issue_id": raised["issue_id"],
             "title": "Riser R-3 splash zone corrosion",
             "status": "new",
+            "priority": None,
             "raised_at": raised["raised_at"],
             "sub_issue_count": 0,
             "similar_issue_count": 0,
