@@ -75,6 +75,10 @@ class Settings(BaseSettings):
             chunk counts towards an ambiguous overlap. Below `overlap_chunk_similarity`.
         overlap_min_chunk_share: Share of a version's chunks, from 0 to 1, that must
             repeat another item for an overlap flag.
+        similar_issue_duplicate_from: Word similarity, from 0 to 1, from which a new
+            Issue is flagged as a likely duplicate of an Issue of its Node (ADR 0012).
+        similar_issue_overlap_from: Lower word similarity, from 0 to 1, from which a new
+            Issue is flagged as overlapping. Below `similar_issue_duplicate_from`.
     """
 
     # extra="forbid" makes a stale or misspelled variable in .env fail at startup.
@@ -113,6 +117,8 @@ class Settings(BaseSettings):
     overlap_chunk_similarity: float = Field(default=0.40, gt=0, le=1)
     overlap_ambiguous_from_similarity: float = Field(default=0.25, gt=0, le=1)
     overlap_min_chunk_share: float = Field(default=0.20, gt=0, le=1)
+    similar_issue_duplicate_from: float = Field(default=0.40, gt=0, le=1)
+    similar_issue_overlap_from: float = Field(default=0.25, gt=0, le=1)
 
     @field_validator("database_url", "rabbitmq_url", "rabbitmq_management_url")
     @classmethod
@@ -135,6 +141,9 @@ class Settings(BaseSettings):
             raise ValueError(message)
         if self.overlap_ambiguous_from_similarity >= self.overlap_chunk_similarity:
             message = "overlap_ambiguous_from_similarity must be below overlap_chunk_similarity"
+            raise ValueError(message)
+        if self.similar_issue_overlap_from >= self.similar_issue_duplicate_from:
+            message = "similar_issue_overlap_from must be below similar_issue_duplicate_from"
             raise ValueError(message)
         return self
 

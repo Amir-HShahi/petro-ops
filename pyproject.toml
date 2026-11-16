@@ -26,6 +26,7 @@ dependencies = [
 
 [project.scripts]
 knowledge = "offline_rag.knowledge.interface.cli:run"
+issue = "offline_rag.issue.interface.cli:run"
 organization = "offline_rag.organization.interface.cli:run"
 
 [build-system]
@@ -89,13 +90,13 @@ root_package = "offline_rag"
 [[tool.importlinter.contracts]]
 name = "Hexagonal layers in each bounded context"
 type = "layers"
-containers = ["offline_rag.knowledge", "offline_rag.organization"]
+containers = ["offline_rag.issue", "offline_rag.knowledge", "offline_rag.organization"]
 layers = ["interface", "infrastructure", "application", "domain"]
 
 [[tool.importlinter.contracts]]
-name = "Knowledge reads Nodes only through the queries of Organizational Hierarchy"
+name = "Knowledge and Issue read Nodes only through the queries of Organizational Hierarchy"
 type = "forbidden"
-source_modules = ["offline_rag.knowledge"]
+source_modules = ["offline_rag.issue", "offline_rag.knowledge"]
 forbidden_modules = [
     "offline_rag.organization.domain",
     "offline_rag.organization.infrastructure",
@@ -105,10 +106,29 @@ forbidden_modules = [
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
-name = "Knowledge domain and use cases do not depend on Organizational Hierarchy"
+name = "Knowledge and Issue domain and use cases do not depend on Organizational Hierarchy"
 type = "forbidden"
-source_modules = ["offline_rag.knowledge.domain", "offline_rag.knowledge.application"]
+source_modules = [
+    "offline_rag.issue.domain",
+    "offline_rag.issue.application",
+    "offline_rag.knowledge.domain",
+    "offline_rag.knowledge.application",
+]
 forbidden_modules = ["offline_rag.organization"]
+
+[[tool.importlinter.contracts]]
+name = "Issue reads knowledge only through the queries of Knowledge Management"
+type = "forbidden"
+source_modules = ["offline_rag.issue"]
+forbidden_modules = ["offline_rag.knowledge.infrastructure"]
+# The queries reach their own adapters; only direct imports are refused.
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Issue domain and use cases do not depend on Knowledge Management"
+type = "forbidden"
+source_modules = ["offline_rag.issue.domain", "offline_rag.issue.application"]
+forbidden_modules = ["offline_rag.knowledge"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"

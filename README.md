@@ -69,6 +69,39 @@ uv run organization define-transfer-rule 1 --detail-level managerial --required-
 
 `docker/organization-demo.sh` runs the whole flow step by step: it starts Postgres, creates the tables, imports the chart, registers a Node, shows the hierarchy rules refusing four bad Nodes, defines the transfer rules of Layers 0 to 3 and prints the chart. Add `--reset` to start from an empty chart.
 
+## Issues
+
+An Issue is a problem a Node works on, split into a tree of SubIssues (spec §12). An Issue can only be raised for a registered Node, so import the Nodes first. A new Issue is compared with the Node's other Issues, and any that look like it are listed under `similar_issues` as a likely `duplicate` or an `overlap` (ADR 0012). Both Issues are kept.
+
+```bash
+uv run issue raise --node platform_sp12 --title "Riser R-3 splash zone corrosion" --description "Gas export riser R-3 is losing wall in the splash zone." --domain "asset integrity" --tag riser
+uv run issue add-sub-issue <issue_id> --title "Permanent repair option" --description "Choose between a clamp-on sleeve and a section replacement."
+uv run issue add-sub-issue <issue_id> --parent <sub_issue_id> --title "Clamp-on sleeve" --description "Check whether a sleeve can carry the riser loads."
+uv run issue show <issue_id>
+uv run issue list --node platform_sp12
+```
+
+`add-sub-issue` prints the new id as `added_sub_issue_id`. Pass it as `--parent` to split that SubIssue further; a new SubIssue goes last among its siblings.
+
+The local LLM can suggest SubIssues too. It reads the KnowledgeItems you name and cites them; a citation whose quote is not in its item is dropped. The suggestions wait as numbered candidates until you accept the ones worth keeping. This needs Ollama with the model in `models/manifest.yaml`, and takes about a minute.
+
+```bash
+uv run issue decompose <issue_id> --knowledge-item <item_id>
+uv run issue accept-sub-issue-candidates <issue_id> 1 3
+```
+
+An Issue then gets a priority (`low`, `medium`, `high` or `critical`), its SubIssues an order and the SubIssues they wait for, and both a status from spec §14.1. Any status may follow any other, except that nothing leaves `archived`. The Issue itself is resolved only with `resolve`, once every SubIssue is resolved, unresolved or archived; it then stays as it is until its status changes again.
+
+```bash
+uv run issue set-priority <issue_id> high
+uv run issue move-sub-issue <issue_id> <sub_issue_id> --position 1
+uv run issue add-dependency <issue_id> <sub_issue_id> --on <other_sub_issue_id>
+uv run issue change-status <issue_id> resolved --sub-issue <sub_issue_id>
+uv run issue resolve <issue_id> --summary "Riser section replaced in March 2027."
+```
+
+`docker/issue-demo.sh` runs the whole flow step by step.
+
 ## Checks
 
 ```bash

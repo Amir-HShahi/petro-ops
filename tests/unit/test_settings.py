@@ -116,3 +116,21 @@ def test_ambiguous_band_is_rejected_when_it_starts_at_the_overlap_threshold():
 def test_duplicate_shingle_words_is_rejected_when_zero():
     with pytest.raises(ValidationError):
         Settings(duplicate_shingle_words=0)
+
+
+def test_similar_issue_defaults_are_accepted_when_nothing_is_set():
+    settings = Settings()
+
+    assert 0 < settings.similar_issue_overlap_from < settings.similar_issue_duplicate_from <= 1
+
+
+@pytest.mark.parametrize("field", ["similar_issue_duplicate_from", "similar_issue_overlap_from"])
+@pytest.mark.parametrize("value", [0, 1.2])
+def test_similar_issue_threshold_is_rejected_when_out_of_range(field: str, value: float):
+    with pytest.raises(ValidationError):
+        Settings(**{field: value})
+
+
+def test_similar_issue_overlap_is_rejected_when_it_reaches_the_duplicate_threshold():
+    with pytest.raises(ValidationError, match="similar_issue_overlap_from"):
+        Settings(similar_issue_duplicate_from=0.4, similar_issue_overlap_from=0.4)

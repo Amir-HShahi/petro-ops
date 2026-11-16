@@ -77,6 +77,35 @@ Add a row in the same PR that adds the code.
 | `ORGANIZATION_TRANSFER_TOPIC_REQUIRED_AND_EXCLUDED` | Domain | A topic is both required and excluded in a Layer's transfer rules. `details.topics` lists them. | Keep each topic in one list only. |
 | `ORGANIZATION_TRANSFER_RULE_FIELD_EMPTY` | Domain | A topic, the output format or the source reference level of a transfer rule is blank. `details.field` names it. | Fill in that field. |
 | `ORGANIZATION_INVALID_PACKAGE_LENGTH` | Domain | The maximum TransferPackage length is not a whole number of tokens above 0. | Give a positive number of tokens. |
+| `ISSUE_FIELD_EMPTY` | Domain | The id, title or description of an Issue or a SubIssue is blank. `details.field` names it. | Fill in that field. |
+| `ISSUE_SUB_ISSUE_ID_TAKEN` | Domain | A SubIssue id is already used by its Issue or by another SubIssue of the same Issue. | Give the SubIssue another id. |
+| `ISSUE_SUB_ISSUE_PARENT_NOT_FOUND` | Domain | A SubIssue's parent is neither its Issue nor one of that Issue's SubIssues. | Split the Issue itself or one of its existing SubIssues. |
+| `ISSUE_SUB_ISSUE_CYCLE` | Domain | Stored SubIssues are each other's parents, so they do not form a tree. `details.sub_issue_ids` lists them. | Fix the parents of those SubIssues so each one leads up to the Issue. |
+| `ISSUE_INVALID_SUB_ISSUE_POSITION` | Domain | The SubIssues under one parent are not numbered 1, 2, 3 and on. | Renumber the SubIssues under that parent without gaps. |
+| `ISSUE_INVALID_SIMILAR_ISSUE_FLAG` | Domain | A stored similar-Issue flag points at its own Issue, or the same Issue is flagged twice. | Remove the extra flag from `similar_issue_flag`. |
+| `ISSUE_INVALID_SUB_ISSUE_CANDIDATE` | Domain | Stored SubIssue candidates share a number, have a number below 1, or an accepted one names a SubIssue the Issue does not have. | Fix the rows of that Issue in `sub_issue_candidate`. |
+| `ISSUE_SUB_ISSUE_CANDIDATE_NOT_FOUND` | Not found | An Issue has no SubIssue candidate with the number given. | Check the numbers with `issue show`, or run `issue decompose` for new candidates. |
+| `ISSUE_SUB_ISSUE_CANDIDATE_ALREADY_ACCEPTED` | Domain | A SubIssue candidate was accepted before, so it is a SubIssue already. `details.sub_issue_id` names it. | Leave that number out. |
+| `ISSUE_KNOWLEDGE_REQUIRED` | Domain | An Issue was sent for decomposition without any KnowledgeItem, so no suggestion could cite a source. | Name at least one item with `--knowledge-item`. |
+| `ISSUE_KNOWLEDGE_ITEM_NOT_FOUND` | Not found | A KnowledgeItem named for a decomposition does not exist. | Use the item id that `knowledge submit` printed. |
+| `ISSUE_KNOWLEDGE_TOO_LARGE` | Domain | The named KnowledgeItems do not fit in the model's context next to the prompt. `details` gives both sizes in tokens. | Name fewer or shorter items. |
+| `ISSUE_KNOWLEDGE_UNAVAILABLE` | Infrastructure | The chunks of the named KnowledgeItems cannot be read. | Check that Postgres is running and `DATABASE_URL` points to it. |
+| `ISSUE_MODEL_URL_NOT_LOCAL` | Infrastructure | `OLLAMA_URL` is not a loopback address, which the offline rule forbids. | Set `OLLAMA_URL` to an address on this machine, such as `http://127.0.0.1:11434`. |
+| `ISSUE_MODEL_UNAVAILABLE` | Infrastructure | The local LLM did not answer a decomposition: Ollama is not running, the model is not pulled, or it timed out. | Start Ollama, pull the model in `models/manifest.yaml`, then try again. |
+| `ISSUE_MODEL_REGISTRY_UNAVAILABLE` | Infrastructure | The `issue_decomposition` prompt or its model is missing from `prompts/registry.yaml` or `models/manifest.yaml`. | Restore the registry entries and the prompt file. |
+| `ISSUE_DECOMPOSITION_ANSWER_INVALID` | Infrastructure | The LLM's answers to a decomposition were not the JSON the prompt asks for, on every attempt. | Try again, or name other KnowledgeItems. |
+| `ISSUE_SUB_ISSUE_NOT_FOUND` | Not found | An Issue has no SubIssue with the id given, or a stored SubIssue waits for one that is not there. | Check the ids with `issue show`. |
+| `ISSUE_SUB_ISSUE_POSITION_OUT_OF_RANGE` | Domain | A SubIssue was moved to a place its siblings do not have. `details.sibling_count` gives the number of places. | Give a place from 1 to the number of siblings. |
+| `ISSUE_SUB_ISSUE_DEPENDENCY_CYCLE` | Domain | SubIssues would wait for each other, directly or through others. `details.sub_issue_ids` lists them. | Remove one of the dependencies first, or leave this one out. |
+| `ISSUE_SUB_ISSUE_DEPENDENCY_NOT_FOUND` | Not found | A SubIssue does not wait for the SubIssue named. | Check its `depends_on` with `issue show`. |
+| `ISSUE_ARCHIVED_IS_FINAL` | Domain | An archived Issue or SubIssue was given another status. | Raise a new Issue, or add a new SubIssue, instead. |
+| `ISSUE_RESOLVE_REQUIRED` | Domain | An Issue was set to resolved with `change-status`. | Use `issue resolve` with a resolution summary. |
+| `ISSUE_HAS_OPEN_SUB_ISSUES` | Domain | An Issue was resolved while some SubIssues are still open. `details.sub_issue_ids` lists them. | Set each of them to resolved, unresolved or archived first. |
+| `ISSUE_CLOSED` | Domain | A resolved or archived Issue was changed: its SubIssues, candidates, dependencies or priority. | Change the Issue's status first to reopen it. |
+| `ISSUE_NOT_FOUND` | Not found | No Issue has the requested id. | Check the id that `issue raise` printed, or list the Node's Issues with `issue list`. |
+| `ISSUE_OWNER_NODE_NOT_FOUND` | Not found | An Issue was raised for a Node that is not registered in Organizational Hierarchy. | Register the Node first, for example with `uv run organization import-nodes`. |
+| `ISSUE_STORAGE_FAILED` | Infrastructure | The local database of Issues cannot be read or written, or two SubIssues were added under the same parent at the same moment. | Check that Postgres is running and the migrations have run, then try again. |
+| `ISSUE_NODE_REGISTRY_UNAVAILABLE` | Infrastructure | The registered Nodes of Organizational Hierarchy cannot be read, so the owner of a new Issue cannot be checked. | Check that Postgres is running and `DATABASE_URL` points to it. |
 | `EVALUATION_INVALID_JUDGE_THRESHOLD` | Domain | A judge threshold is not a whole number of points from 1 to 20. | Give a score from 1 to 20, such as 18. |
 | `KNOWLEDGE_EMPTY_FILE` | Domain | A submitted file has no content. | Submit the file again with its content. |
 | `KNOWLEDGE_UNSUPPORTED_FORMAT` | Domain | A submitted file is not DOC, DOCX or PDF. The format is read from the file content, not its name. | Convert the file to DOC, DOCX or PDF. |
