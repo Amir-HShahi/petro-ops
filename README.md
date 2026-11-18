@@ -100,7 +100,7 @@ uv run issue change-status <issue_id> resolved --sub-issue <sub_issue_id>
 uv run issue resolve <issue_id> --summary "Riser section replaced in March 2027."
 ```
 
-`docker/issue-demo.sh` runs the whole flow step by step.
+`docker/issue-demo.sh` runs the whole flow step by step. The same flow is on the Issues tab of the pipeline page (`/pipeline#issues`, ADR 0013), served by `uv run knowledge api run` or `docker/pipeline-up.sh`.
 
 ## Checks
 

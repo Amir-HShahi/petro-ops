@@ -735,7 +735,7 @@ for (const name of ["blocks", "chunks"]) {
   });
 }
 
-const VIEWS = ["pipeline", "knowledge", "hierarchy"];
+const VIEWS = ["pipeline", "knowledge", "hierarchy", "issues"];
 
 function showView(name) {
   const view = VIEWS.includes(name) ? name : "pipeline";

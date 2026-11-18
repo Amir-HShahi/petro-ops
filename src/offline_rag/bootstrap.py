@@ -35,6 +35,7 @@ from offline_rag.issue.infrastructure.postgres_database import (
     PostgresDatabase as IssueDatabase,
 )
 from offline_rag.issue.infrastructure.postgres_issue_repository import PostgresIssueRepository
+from offline_rag.issue.interface.api import IssueRouteHandlers, create_issue_router
 from offline_rag.knowledge.application.chunk_knowledge_content import (
     ChunkingSizes,
     ChunkKnowledgeContentHandler,
@@ -195,11 +196,13 @@ class IssueWiring:
     queries: IssueQueries
     database: IssueDatabase
     knowledge: KnowledgeWiring
+    owns_knowledge: bool = True
 
     def close(self) -> None:
-        """Close the database pools and the broker connection."""
+        """Close the database pool, and the knowledge wiring when it was built for this one."""
         self.database.close()
-        self.knowledge.close()
+        if self.owns_knowledge:
+            self.knowledge.close()
 
 
 def configure_logging(settings: Settings) -> None:
@@ -419,8 +422,14 @@ def build_organization(settings: Settings) -> OrganizationWiring:
     )
 
 
-def build_issue(settings: Settings) -> IssueWiring:
-    """Return Issue Management on Postgres (ADR 0004)."""
+def build_issue(settings: Settings, *, knowledge: KnowledgeWiring | None = None) -> IssueWiring:
+    """Return Issue Management on Postgres (ADR 0004).
+
+    Args:
+        settings: The settings to build from.
+        knowledge: Knowledge Management wiring to reuse, such as the API's. When None,
+            one is built and closed with the Issue wiring.
+    """
     database = IssueDatabase(
         settings.database_url,
         pool_size=settings.database_pool_size,
@@ -433,7 +442,9 @@ def build_issue(settings: Settings) -> IssueWiring:
     # An Issue's owner Node is checked against Organizational Hierarchy (spec §12), and
     # its decomposition reads the chunks of KnowledgeItems (spec §12.5). Knowledge
     # Management already holds the Organizational Hierarchy wiring, so it is reused.
-    knowledge = build_knowledge(settings)
+    owns_knowledge = knowledge is None
+    if knowledge is None:
+        knowledge = build_knowledge(settings)
     return IssueWiring(
         raise_issue_handler=RaiseIssueHandler(
             issue_repository=issue_repository,
@@ -489,6 +500,7 @@ def build_issue(settings: Settings) -> IssueWiring:
         queries=IssueQueries(issue_repository=issue_repository),
         database=database,
         knowledge=knowledge,
+        owns_knowledge=owns_knowledge,
     )
 
 
@@ -502,6 +514,29 @@ def build_organization_router(organization: OrganizationWiring) -> APIRouter:
         register_node_handler=organization.register_node_handler,
         define_transfer_rule_handler=organization.define_transfer_rule_handler,
         queries=organization.hierarchy_queries,
+    )
+
+
+def build_issue_router(issue: IssueWiring) -> APIRouter:
+    """Return the Issue Management routes to mount on the API (ADR 0013).
+
+    The routes are built here because Knowledge Management may not import the
+    interface of another context.
+    """
+    return create_issue_router(
+        IssueRouteHandlers(
+            raise_issue=issue.raise_issue_handler,
+            add_sub_issue=issue.add_sub_issue_handler,
+            decompose_issue=issue.decompose_issue_handler,
+            accept_sub_issue_candidates=issue.accept_sub_issue_candidates_handler,
+            set_priority=issue.set_priority_handler,
+            move_sub_issue=issue.move_sub_issue_handler,
+            add_dependency=issue.add_dependency_handler,
+            remove_dependency=issue.remove_dependency_handler,
+            change_status=issue.change_status_handler,
+            resolve_issue=issue.resolve_issue_handler,
+            queries=issue.queries,
+        )
     )
 
 

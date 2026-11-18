@@ -2,7 +2,8 @@
 # Start the whole ingestion pipeline with one command (docs/running-ingestion.md):
 # Postgres and RabbitMQ in Docker, then the tables, the outbox relay, the text
 # workers, the vision worker, the chunking worker and the API as local processes. Ctrl+C stops the
-# processes; the containers keep running unless --down is given.
+# processes; the containers keep running unless --down is given. The API also serves the
+# Hierarchy and Issues pages, which need no worker of their own.
 set -euo pipefail
 
 usage() {
@@ -122,6 +123,13 @@ for _ in $(seq 1 60); do
 done
 echo
 echo "Pipeline page: $page_url"
+echo "  Versions & duplicates: $page_url#knowledge"
+echo "  Hierarchy:             $page_url#hierarchy"
+echo "  Issues:                $page_url#issues"
+# The Issues page asks Gemma for SubIssues itself, so it needs Ollama even with --no-vision.
+if ! curl -sf --max-time 2 "$ollama_url/api/tags" >/dev/null; then
+  echo "  Ollama does not answer at $ollama_url; Decompose on the Issues page fails until it runs."
+fi
 echo "Press Ctrl+C to stop."
 
 # Stop everything when one process dies, so a crash is not missed during a demo.

@@ -19,6 +19,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from offline_rag.bootstrap import (
+    build_issue,
+    build_issue_router,
     build_knowledge,
     build_organization_router,
     configure_logging,
@@ -306,6 +308,8 @@ def run_api(settings: Settings) -> None:
     """Serve the API on `API_HOST`:`API_PORT` until stopped."""
     configure_logging(settings)
     knowledge = build_knowledge(settings)
+    # Issue Management shares this Knowledge Management wiring and its connections.
+    issue = build_issue(settings, knowledge=knowledge)
     app = create_app(
         submit_handler=knowledge.submit_handler,
         publish_version_handler=knowledge.publish_version_handler,
@@ -313,7 +317,10 @@ def run_api(settings: Settings) -> None:
         queries=knowledge.queries,
         max_file_mb=settings.max_file_mb,
         min_page_text_chars=settings.min_page_text_chars,
-        extra_routers=[build_organization_router(knowledge.organization)],
+        extra_routers=[
+            build_organization_router(knowledge.organization),
+            build_issue_router(issue),
+        ],
     )
     log.info("api_started", host=settings.api_host, port=settings.api_port)
     try:
@@ -322,6 +329,7 @@ def run_api(settings: Settings) -> None:
             app, host=settings.api_host, port=settings.api_port, access_log=False, log_config=None
         )
     finally:
+        issue.close()
         knowledge.close()
         log.info("api_stopped")
 
