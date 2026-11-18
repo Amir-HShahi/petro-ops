@@ -93,7 +93,7 @@ uv run organization import-nodes
 docker/pipeline-up.sh
 ```
 
-It starts Postgres and RabbitMQ, applies the vision-queue policy, creates the tables, registers the Nodes of `fixtures/registry/nodes.csv`, then starts the relay, one text worker, the vision worker, the chunking worker and the API. It prints the pipeline page URL, and each process logs to `data/logs/<name>.log`. Ctrl+C stops the processes; the containers keep running.
+It starts Postgres and RabbitMQ, applies the vision-queue policy, creates the tables, registers the Nodes of `fixtures/registry/nodes.csv`, then starts the relay, one text worker, the vision worker, the chunking worker and the API. It prints the pipeline page URL with a link to each of its views (Pipeline, Versions & duplicates, Hierarchy and Issues, ADR 0011 and ADR 0013), and each process logs to `data/logs/<name>.log`. Decompose on the Issues view calls Gemma, so it needs Ollama even with `--no-vision`; the script warns when Ollama does not answer. Ctrl+C stops the processes; the containers keep running.
 
 | Option | Effect |
 |---|---|

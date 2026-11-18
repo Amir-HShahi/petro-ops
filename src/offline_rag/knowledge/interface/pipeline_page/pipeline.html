@@ -106,6 +106,7 @@
         <button type="button" role="tab" data-view-tab="pipeline" aria-selected="true">Pipeline</button>
         <button type="button" role="tab" data-view-tab="knowledge" aria-selected="false">Versions &amp; duplicates</button>
         <button type="button" role="tab" data-view-tab="hierarchy" aria-selected="false">Hierarchy</button>
+        <button type="button" role="tab" data-view-tab="issues" aria-selected="false">Issues</button>
       </nav>
       <div class="site-actions">
         <div class="live" id="live" data-state="connecting">
@@ -416,6 +417,89 @@
     </section>
   </main>
 
+  <main class="page" data-view="issues" hidden>
+    <div class="page-head">
+      <div>
+        <h1>Issues</h1>
+        <p class="summary" aria-live="off">
+          <span class="summary-item"><b data-issue-count="issues">0</b> issues</span>
+          <span class="summary-item tone-active"><b data-issue-count="open">0</b> open</span>
+          <span class="summary-item tone-done"><b data-issue-count="resolved">0</b> resolved</span>
+        </p>
+      </div>
+      <div class="head-actions">
+        <label class="inline-label">Node <select id="issue-node"></select></label>
+        <button type="button" class="btn btn-primary" id="issue-open">Raise Issue</button>
+      </div>
+    </div>
+
+    <section class="box" aria-labelledby="issue-steps-title">
+      <div class="box-head"><h2 id="issue-steps-title">How an Issue moves</h2></div>
+      <dl class="kinds">
+        <div class="kind" data-kind="exact"><dt>1. Raise</dt><dd>A Node defines a problem. It is compared with the Node's Issues; a likely duplicate or overlap is flagged, and both are kept.</dd></div>
+        <div class="kind" data-kind="near"><dt>2. Split</dt><dd>Add SubIssues by hand, at any depth, or let Gemma suggest them from the KnowledgeItems you pick. You accept the suggestions worth keeping.</dd></div>
+        <div class="kind" data-kind="metadata_variant"><dt>3. Order and wait</dt><dd>Set a priority, reorder SubIssues and say which one waits for which. SubIssues never wait for each other in a circle.</dd></div>
+        <div class="kind" data-kind="overlap"><dt>4. Close and resolve</dt><dd>Close every SubIssue, then resolve the Issue with how it was solved. A resolved Issue stays as it is until reopened.</dd></div>
+      </dl>
+    </section>
+
+    <div class="split">
+      <section class="box" aria-labelledby="issue-list-title">
+        <div class="box-head"><h2 id="issue-list-title">Issues of the Node</h2><span class="hint">Oldest first</span></div>
+        <ul class="item-list" id="issue-list"></ul>
+        <p class="empty" id="issue-list-empty">No Issues for this Node yet. Raise the first one.</p>
+        <p class="message error box-message" id="issue-list-error" hidden></p>
+      </section>
+
+      <section class="box" id="issue-detail" aria-labelledby="issue-title" hidden>
+        <div class="box-head">
+          <div class="dialog-title">
+            <h2 id="issue-title">Issue</h2>
+            <p class="hint" id="issue-summary"></p>
+          </div>
+        </div>
+        <div class="issue-body">
+          <p class="issue-description" id="issue-description"></p>
+          <div class="issue-controls">
+            <label class="inline-label">Priority <select id="issue-priority"></select></label>
+            <label class="inline-label">Status <select id="issue-status"></select></label>
+            <button type="button" class="btn btn-primary" id="issue-resolve">Resolve</button>
+          </div>
+          <p class="message error" id="issue-error" role="alert"></p>
+          <p class="issue-resolution" id="issue-resolution" hidden></p>
+          <div id="issue-flags"></div>
+
+          <div class="issue-section">
+            <div class="issue-section-head">
+              <h3>SubIssues</h3>
+              <button type="button" class="btn" id="sub-open">Add SubIssue</button>
+            </div>
+            <ul class="tree sub-tree" id="sub-tree"></ul>
+            <p class="empty" id="sub-tree-empty">No SubIssues yet. Add one by hand, or ask Gemma below.</p>
+          </div>
+
+          <div class="issue-section">
+            <div class="issue-section-head">
+              <h3>Ask Gemma for SubIssues</h3>
+              <span class="hint">Gemma reads only the items you tick and must quote them. About a minute.</span>
+            </div>
+            <ul class="knowledge-choices" id="knowledge-choices"></ul>
+            <p class="empty" id="knowledge-choices-empty">No knowledge yet. Submit files on the Pipeline page and wait until they are chunked.</p>
+            <div class="issue-controls">
+              <button type="button" class="btn btn-primary" id="decompose">Decompose</button>
+              <span class="decompose-wait" id="decompose-wait" hidden></span>
+            </div>
+            <p class="message" id="decompose-message" role="status" aria-live="polite"></p>
+            <ol class="candidates" id="candidate-list"></ol>
+            <div class="issue-controls" id="accept-row" hidden>
+              <button type="button" class="btn btn-primary" id="accept-candidates">Accept selected</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
   <dialog id="blocks-dialog" aria-labelledby="blocks-title">
     <div class="dialog-head">
       <span class="status-icon tone-success" id="blocks-icon"></span>
@@ -514,8 +598,64 @@
     </form>
   </dialog>
 
+  <dialog id="issue-dialog" aria-labelledby="issue-dialog-title">
+    <div class="dialog-head">
+      <div class="dialog-title">
+        <h2 id="issue-dialog-title">Raise Issue</h2>
+        <p class="hint" id="issue-dialog-summary">It is compared with the Node's other Issues before it is created.</p>
+      </div>
+      <button type="button" class="icon-button" id="issue-dialog-close" aria-label="Close">
+        <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-close"></use></svg>
+      </button>
+    </div>
+    <form class="dialog-form" id="issue-form">
+      <label>Title <input type="text" name="title" required placeholder="Riser R-3 splash zone corrosion"></label>
+      <label>Description <textarea name="description" rows="4" required placeholder="Gas export riser R-3 is losing wall in the splash zone."></textarea></label>
+      <label><span>Domain <span class="hint">optional</span></span> <input type="text" name="domain" placeholder="asset integrity"></label>
+      <label><span>Tags <span class="hint">comma separated, optional</span></span> <input type="text" name="tags" placeholder="riser, splash zone"></label>
+      <button type="submit" class="btn btn-primary" id="issue-submit">Raise Issue</button>
+      <p class="message" id="issue-form-message" role="status" aria-live="polite"></p>
+    </form>
+  </dialog>
+
+  <dialog id="sub-dialog" aria-labelledby="sub-dialog-title">
+    <div class="dialog-head">
+      <div class="dialog-title">
+        <h2 id="sub-dialog-title">Add SubIssue</h2>
+        <p class="hint" id="sub-dialog-summary"></p>
+      </div>
+      <button type="button" class="icon-button" id="sub-dialog-close" aria-label="Close">
+        <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-close"></use></svg>
+      </button>
+    </div>
+    <form class="dialog-form" id="sub-form">
+      <label>Title <input type="text" name="title" required placeholder="Rope access UT survey of the splash zone"></label>
+      <label>Description <textarea name="description" rows="3" required placeholder="Measure the remaining wall between EL +5 m and EL +9 m."></textarea></label>
+      <button type="submit" class="btn btn-primary" id="sub-submit">Add SubIssue</button>
+      <p class="message" id="sub-form-message" role="status" aria-live="polite"></p>
+    </form>
+  </dialog>
+
+  <dialog id="resolve-dialog" aria-labelledby="resolve-dialog-title">
+    <div class="dialog-head">
+      <div class="dialog-title">
+        <h2 id="resolve-dialog-title">Resolve Issue</h2>
+        <p class="hint">Every SubIssue must be resolved, unresolved or archived first.</p>
+      </div>
+      <button type="button" class="icon-button" id="resolve-dialog-close" aria-label="Close">
+        <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-close"></use></svg>
+      </button>
+    </div>
+    <form class="dialog-form" id="resolve-form">
+      <label>How was it solved? <textarea name="resolution_summary" rows="3" required placeholder="Splash zone wrapped in May; riser section replaced in the August shutdown."></textarea></label>
+      <button type="submit" class="btn btn-primary" id="resolve-submit">Resolve</button>
+      <p class="message" id="resolve-form-message" role="status" aria-live="polite"></p>
+    </form>
+  </dialog>
+
   <script src="/pipeline/assets/pipeline.js"></script>
   <script src="/pipeline/assets/versions.js"></script>
   <script src="/pipeline/assets/hierarchy.js"></script>
+  <script src="/pipeline/assets/issues.js"></script>
 </body>
 </html>
